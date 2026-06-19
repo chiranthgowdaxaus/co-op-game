@@ -116,7 +116,7 @@ function syncWorld(state: RoomState) {
   pressurePlate.material = state.plateActive
     ? plateActiveMaterial
     : plateInactiveMaterial;
-  door.position.y = state.doorOpen ? -2 : 1.5;
+  door.position.y = state.doorOpen ? 4.5 : 1.5;
 }
 
 function capitalize(value: string) {
@@ -159,8 +159,8 @@ function currentInput(): MovementInput {
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
   const z =
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown")) -
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp"));
+    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
+    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
   const length = Math.hypot(x, z);
 
   return length > 1 ? { x: x / length, z: z / length } : { x, z };
