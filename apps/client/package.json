@@ -1,0 +1,15 @@
+{
+  "name": "@coop/client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.13.0",
+    "@colyseus/sdk": "^0.17.43",
+    "@coop/shared": "0.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Co-op Game</title>
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+
+    <main class="panel">
+      <h1>Co-op Game</h1>
+      <button id="create-room" type="button">Create room</button>
+
+      <form id="join-room">
+        <input
+          id="room-code-input"
+          aria-label="Room code"
+          maxlength="4"
+          placeholder="ROOM"
+          autocomplete="off"
+          required
+        />
+        <button type="submit">Join room</button>
+      </form>
+
+      <p id="room-code" hidden></p>
+      <p id="identity" hidden></p>
+      <p id="partner" hidden></p>
+      <p id="status">Create or join a room.</p>
+      <p class="controls">Move: WASD or arrow keys</p>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
