@@ -14,6 +14,7 @@ export interface PlayerState {
 export interface RoomState {
   players: Map<string, PlayerState>;
   plateActive: boolean;
+  leverActive: boolean;
   doorOpen: boolean;
   playersAtExit: number;
   levelComplete: boolean;

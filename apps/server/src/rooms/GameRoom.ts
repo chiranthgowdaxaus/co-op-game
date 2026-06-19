@@ -12,6 +12,9 @@ const DOOR_Z = 3;
 const DOOR_HALF_WIDTH = 3;
 const DOOR_HALF_DEPTH = 0.25;
 const PLAYER_HALF_SIZE = 0.5;
+const LEVER_X = 3;
+const LEVER_Z = 5;
+const LEVER_INTERACT_DISTANCE = 1.5;
 const EXIT_HALF_WIDTH = 2;
 const EXIT_CENTER_Z = 7;
 const EXIT_HALF_DEPTH = 1.5;
@@ -25,6 +28,7 @@ class PlayerSchema extends Schema {
 class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
   @type("boolean") plateActive = false;
+  @type("boolean") leverActive = false;
   @type("boolean") doorOpen = false;
   @type("uint8") playersAtExit = 0;
   @type("boolean") levelComplete = false;
@@ -41,6 +45,18 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
     this.onMessage("input", (client, message: unknown) => {
       this.inputs.set(client.sessionId, this.sanitizeInput(message));
+    });
+
+    this.onMessage("interact", (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (
+        player &&
+        Math.hypot(player.x - LEVER_X, player.z - LEVER_Z) <=
+          LEVER_INTERACT_DISTANCE
+      ) {
+        this.state.leverActive = true;
+        this.state.doorOpen = true;
+      }
     });
 
     this.setSimulationInterval((deltaTime) => this.updatePlayers(deltaTime), TICK_MS);
@@ -79,8 +95,10 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
         Math.min(WORLD_LIMIT, player.z + input.z * distance),
       );
 
-      player.x = nextX;
-      if (this.state.doorOpen || !this.hitsClosedDoor(nextX, nextZ)) {
+      if (!this.hitsBarrier(nextX, player.z)) {
+        player.x = nextX;
+      }
+      if (!this.hitsBarrier(player.x, nextZ)) {
         player.z = nextZ;
       }
     });
@@ -90,7 +108,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
         Math.abs(player.x) <= PLATE_HALF_SIZE &&
         Math.abs(player.z) <= PLATE_HALF_SIZE,
     );
-    this.state.doorOpen = this.state.plateActive;
+    this.state.doorOpen = this.state.plateActive || this.state.leverActive;
     this.state.playersAtExit = Array.from(this.state.players.values()).filter(
       (player) =>
         Math.abs(player.x) <= EXIT_HALF_WIDTH &&
@@ -101,11 +119,17 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     }
   }
 
-  private hitsClosedDoor(x: number, z: number) {
-    return (
-      Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE &&
-      Math.abs(z - DOOR_Z) <= DOOR_HALF_DEPTH + PLAYER_HALF_SIZE
-    );
+  private hitsBarrier(x: number, z: number) {
+    if (Math.abs(z - DOOR_Z) > DOOR_HALF_DEPTH + PLAYER_HALF_SIZE) {
+      return false;
+    }
+
+    const hitsSideWall = Math.abs(x) >= DOOR_HALF_WIDTH - PLAYER_HALF_SIZE;
+    const hitsDoor =
+      !this.state.doorOpen &&
+      Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE;
+
+    return hitsSideWall || hitsDoor;
   }
 
   private sanitizeInput(message: unknown): MovementInput {
