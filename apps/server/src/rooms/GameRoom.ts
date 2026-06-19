@@ -7,6 +7,18 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TICK_MS = 50;
 const MOVE_SPEED = 4;
 const WORLD_LIMIT = 9;
+const PLATE_HALF_SIZE = 0.9;
+const DOOR_Z = 3;
+const DOOR_HALF_WIDTH = 3;
+const DOOR_HALF_DEPTH = 0.25;
+const PLAYER_HALF_SIZE = 0.5;
+const COLLISION_MARGIN = 0.01;
+const LEVER_X = 3;
+const LEVER_Z = 5;
+const LEVER_INTERACT_DISTANCE = 1.5;
+const EXIT_HALF_WIDTH = 2;
+const EXIT_CENTER_Z = 7;
+const EXIT_HALF_DEPTH = 1.5;
 
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
@@ -16,6 +28,11 @@ class PlayerSchema extends Schema {
 
 class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
+  @type("boolean") plateActive = false;
+  @type("boolean") leverActive = false;
+  @type("boolean") doorOpen = false;
+  @type("uint8") playersAtExit = 0;
+  @type("boolean") levelComplete = false;
 }
 
 export class GameRoom extends Room<{ state: GameStateSchema }> {
@@ -29,6 +46,18 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
     this.onMessage("input", (client, message: unknown) => {
       this.inputs.set(client.sessionId, this.sanitizeInput(message));
+    });
+
+    this.onMessage("interact", (client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (
+        player &&
+        Math.hypot(player.x - LEVER_X, player.z - LEVER_Z) <=
+          LEVER_INTERACT_DISTANCE
+      ) {
+        this.state.leverActive = true;
+        this.state.doorOpen = true;
+      }
     });
 
     this.setSimulationInterval((deltaTime) => this.updatePlayers(deltaTime), TICK_MS);
@@ -58,8 +87,70 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       const player = this.state.players.get(sessionId);
       if (!player) return;
 
-      player.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, player.x + input.x * distance));
-      player.z = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, player.z + input.z * distance));
+      const nextX = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, player.x + input.x * distance),
+      );
+      const nextZ = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, player.z + input.z * distance),
+      );
+
+      if (!this.hitsBarrier(nextX, player.z)) {
+        player.x = nextX;
+      }
+      if (!this.hitsBarrier(player.x, nextZ)) {
+        player.z = nextZ;
+      }
+    });
+
+    const wasDoorOpen = this.state.doorOpen;
+    this.state.plateActive = Array.from(this.state.players.values()).some(
+      (player) =>
+        Math.abs(player.x) <= PLATE_HALF_SIZE &&
+        Math.abs(player.z) <= PLATE_HALF_SIZE,
+    );
+    this.state.doorOpen = this.state.plateActive || this.state.leverActive;
+    if (wasDoorOpen && !this.state.doorOpen) {
+      this.pushPlayersOutOfDoor();
+    }
+    this.state.playersAtExit = Array.from(this.state.players.values()).filter(
+      (player) =>
+        Math.abs(player.x) <= EXIT_HALF_WIDTH &&
+        Math.abs(player.z - EXIT_CENTER_Z) <= EXIT_HALF_DEPTH,
+    ).length;
+    if (this.state.players.size === 2 && this.state.playersAtExit === 2) {
+      this.state.levelComplete = true;
+    }
+  }
+
+  private hitsBarrier(x: number, z: number) {
+    if (Math.abs(z - DOOR_Z) > DOOR_HALF_DEPTH + PLAYER_HALF_SIZE) {
+      return false;
+    }
+
+    const hitsSideWall = Math.abs(x) >= DOOR_HALF_WIDTH - PLAYER_HALF_SIZE;
+    const hitsDoor =
+      !this.state.doorOpen &&
+      Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE;
+
+    return hitsSideWall || hitsDoor;
+  }
+
+  private pushPlayersOutOfDoor() {
+    const safeOffset =
+      DOOR_HALF_DEPTH + PLAYER_HALF_SIZE + COLLISION_MARGIN;
+
+    this.state.players.forEach((player) => {
+      const overlapsDoor =
+        Math.abs(player.x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE &&
+        Math.abs(player.z - DOOR_Z) <=
+          DOOR_HALF_DEPTH + PLAYER_HALF_SIZE;
+
+      if (overlapsDoor) {
+        player.z =
+          player.z <= DOOR_Z ? DOOR_Z - safeOffset : DOOR_Z + safeOffset;
+      }
     });
   }
 
