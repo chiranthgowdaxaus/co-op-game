@@ -12,6 +12,7 @@ const DOOR_Z = 3;
 const DOOR_HALF_WIDTH = 3;
 const DOOR_HALF_DEPTH = 0.25;
 const PLAYER_HALF_SIZE = 0.5;
+const COLLISION_MARGIN = 0.01;
 const LEVER_X = 3;
 const LEVER_Z = 5;
 const LEVER_INTERACT_DISTANCE = 1.5;
@@ -103,12 +104,16 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       }
     });
 
+    const wasDoorOpen = this.state.doorOpen;
     this.state.plateActive = Array.from(this.state.players.values()).some(
       (player) =>
         Math.abs(player.x) <= PLATE_HALF_SIZE &&
         Math.abs(player.z) <= PLATE_HALF_SIZE,
     );
     this.state.doorOpen = this.state.plateActive || this.state.leverActive;
+    if (wasDoorOpen && !this.state.doorOpen) {
+      this.pushPlayersOutOfDoor();
+    }
     this.state.playersAtExit = Array.from(this.state.players.values()).filter(
       (player) =>
         Math.abs(player.x) <= EXIT_HALF_WIDTH &&
@@ -130,6 +135,23 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE;
 
     return hitsSideWall || hitsDoor;
+  }
+
+  private pushPlayersOutOfDoor() {
+    const safeOffset =
+      DOOR_HALF_DEPTH + PLAYER_HALF_SIZE + COLLISION_MARGIN;
+
+    this.state.players.forEach((player) => {
+      const overlapsDoor =
+        Math.abs(player.x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE &&
+        Math.abs(player.z - DOOR_Z) <=
+          DOOR_HALF_DEPTH + PLAYER_HALF_SIZE;
+
+      if (overlapsDoor) {
+        player.z =
+          player.z <= DOOR_Z ? DOOR_Z - safeOffset : DOOR_Z + safeOffset;
+      }
+    });
   }
 
   private sanitizeInput(message: unknown): MovementInput {
