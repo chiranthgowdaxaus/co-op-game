@@ -21,6 +21,10 @@ const roomCodeText = document.querySelector<HTMLParagraphElement>("#room-code")!
 const identityText = document.querySelector<HTMLParagraphElement>("#identity")!;
 const partnerText = document.querySelector<HTMLParagraphElement>("#partner")!;
 const statusText = document.querySelector<HTMLParagraphElement>("#status")!;
+const gameStatusText =
+  document.querySelector<HTMLParagraphElement>("#game-status")!;
+const restartButton =
+  document.querySelector<HTMLButtonElement>("#restart-level")!;
 
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
@@ -44,6 +48,69 @@ blueMaterial.diffuseColor = new Color3(0.2, 0.55, 1);
 const orangeMaterial = new StandardMaterial("orange-player", scene);
 orangeMaterial.diffuseColor = new Color3(1, 0.45, 0.2);
 
+const plateInactiveMaterial = new StandardMaterial("plate-inactive", scene);
+plateInactiveMaterial.diffuseColor = new Color3(0.55, 0.45, 0.15);
+
+const plateActiveMaterial = new StandardMaterial("plate-active", scene);
+plateActiveMaterial.diffuseColor = new Color3(0.2, 0.75, 0.3);
+
+const doorMaterial = new StandardMaterial("door", scene);
+doorMaterial.diffuseColor = new Color3(0.45, 0.2, 0.15);
+
+const pressurePlate = CreateBox(
+  "pressure-plate",
+  { width: 1.8, height: 0.15, depth: 1.8 },
+  scene,
+);
+pressurePlate.position.y = 0.075;
+pressurePlate.material = plateInactiveMaterial;
+
+const door = CreateBox("door", { width: 6, height: 3, depth: 0.5 }, scene);
+door.position.set(0, 1.5, 3);
+door.material = doorMaterial;
+
+const leftWall = CreateBox(
+  "left-wall",
+  { width: 6, height: 3, depth: 0.5 },
+  scene,
+);
+leftWall.position.set(-6, 1.5, 3);
+leftWall.material = doorMaterial;
+
+const rightWall = CreateBox(
+  "right-wall",
+  { width: 6, height: 3, depth: 0.5 },
+  scene,
+);
+rightWall.position.set(6, 1.5, 3);
+rightWall.material = doorMaterial;
+
+const leverBase = CreateBox(
+  "lever-base",
+  { width: 0.7, height: 0.25, depth: 0.7 },
+  scene,
+);
+leverBase.position.set(3, 0.125, 5);
+leverBase.material = doorMaterial;
+
+const leverStick = CreateBox(
+  "lever-stick",
+  { width: 0.15, height: 1.2, depth: 0.15 },
+  scene,
+);
+leverStick.material = plateActiveMaterial;
+
+const exitMaterial = new StandardMaterial("exit", scene);
+exitMaterial.diffuseColor = new Color3(0.2, 0.65, 0.45);
+
+const exitZone = CreateBox(
+  "exit-zone",
+  { width: 4, height: 0.08, depth: 3 },
+  scene,
+);
+exitZone.position.set(0, 0.04, 7);
+exitZone.material = exitMaterial;
+
 const meshes = new Map<string, Mesh>();
 const targets = new Map<string, PlayerState>();
 const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567");
@@ -51,6 +118,7 @@ const pressedKeys = new Set<string>();
 
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
+let levelComplete = false;
 
 function syncPlayers(players: Map<string, PlayerState>) {
   const activePlayers = new Set<string>();
@@ -90,6 +158,39 @@ function syncPlayers(players: Map<string, PlayerState>) {
   });
 }
 
+function syncWorld(state: RoomState) {
+  syncPlayers(state.players);
+  if (levelComplete && !state.levelComplete) {
+    state.players.forEach((player, sessionId) => {
+      meshes.get(sessionId)?.position.set(player.x, 0.5, player.z);
+    });
+  }
+  levelComplete = state.levelComplete;
+
+  pressurePlate.material = state.plateActive
+    ? plateActiveMaterial
+    : plateInactiveMaterial;
+  door.position.y = state.doorOpen ? 4.5 : 1.5;
+  const leverAngle = state.leverActive ? 0.6 : -0.6;
+  leverStick.rotation.z = leverAngle;
+  leverStick.position.set(
+    3 - Math.sin(leverAngle) * 0.6,
+    0.25 + Math.cos(leverAngle) * 0.6,
+    5,
+  );
+  gameStatusText.hidden = false;
+  restartButton.hidden = !state.levelComplete;
+  gameStatusText.textContent = state.levelComplete
+    ? "Level complete"
+    : state.playersAtExit > 0
+      ? "Waiting for partner at exit"
+      : state.leverActive
+        ? "Lever activated"
+        : state.plateActive
+          ? "Pressure plate active"
+          : "Door closed";
+}
+
 function capitalize(value: string) {
   return value[0].toUpperCase() + value.slice(1);
 }
@@ -107,7 +208,7 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     roomCodeText.textContent = `Room code: ${room.roomId}`;
     statusText.textContent = "Waiting for partner... 1/2";
 
-    room.onStateChange((state) => syncPlayers(state.players));
+    room.onStateChange(syncWorld);
     room.onLeave(() => {
       room = null;
       statusText.textContent = "Disconnected.";
@@ -130,8 +231,8 @@ function currentInput(): MovementInput {
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
   const z =
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown")) -
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp"));
+    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
+    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
   const length = Math.hypot(x, z);
 
   return length > 1 ? { x: x / length, z: z / length } : { x, z };
@@ -166,7 +267,15 @@ roomCodeInput.addEventListener("input", () => {
   roomCodeInput.value = roomCodeInput.value.toUpperCase().replace(/[^A-Z]/g, "");
 });
 
+restartButton.addEventListener("click", () => {
+  room?.send("restart");
+});
+
 window.addEventListener("keydown", (event) => {
+  if (event.code === "KeyE") {
+    if (!event.repeat) room?.send("interact");
+    return;
+  }
   if (!event.code.startsWith("Arrow") && !event.code.startsWith("Key")) return;
   if (event.code.startsWith("Arrow")) event.preventDefault();
   pressedKeys.add(event.code);
