@@ -130,8 +130,8 @@ function currentInput(): MovementInput {
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
   const z =
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown")) -
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp"));
+    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
+    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
   const length = Math.hypot(x, z);
 
   return length > 1 ? { x: x / length, z: z / length } : { x, z };
