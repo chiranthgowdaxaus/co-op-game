@@ -44,6 +44,27 @@ blueMaterial.diffuseColor = new Color3(0.2, 0.55, 1);
 const orangeMaterial = new StandardMaterial("orange-player", scene);
 orangeMaterial.diffuseColor = new Color3(1, 0.45, 0.2);
 
+const plateInactiveMaterial = new StandardMaterial("plate-inactive", scene);
+plateInactiveMaterial.diffuseColor = new Color3(0.55, 0.45, 0.15);
+
+const plateActiveMaterial = new StandardMaterial("plate-active", scene);
+plateActiveMaterial.diffuseColor = new Color3(0.2, 0.75, 0.3);
+
+const doorMaterial = new StandardMaterial("door", scene);
+doorMaterial.diffuseColor = new Color3(0.45, 0.2, 0.15);
+
+const pressurePlate = CreateBox(
+  "pressure-plate",
+  { width: 1.8, height: 0.15, depth: 1.8 },
+  scene,
+);
+pressurePlate.position.y = 0.075;
+pressurePlate.material = plateInactiveMaterial;
+
+const door = CreateBox("door", { width: 6, height: 3, depth: 0.5 }, scene);
+door.position.set(0, 1.5, 3);
+door.material = doorMaterial;
+
 const meshes = new Map<string, Mesh>();
 const targets = new Map<string, PlayerState>();
 const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567");
@@ -90,6 +111,14 @@ function syncPlayers(players: Map<string, PlayerState>) {
   });
 }
 
+function syncWorld(state: RoomState) {
+  syncPlayers(state.players);
+  pressurePlate.material = state.plateActive
+    ? plateActiveMaterial
+    : plateInactiveMaterial;
+  door.position.y = state.doorOpen ? 4.5 : 1.5;
+}
+
 function capitalize(value: string) {
   return value[0].toUpperCase() + value.slice(1);
 }
@@ -107,7 +136,7 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     roomCodeText.textContent = `Room code: ${room.roomId}`;
     statusText.textContent = "Waiting for partner... 1/2";
 
-    room.onStateChange((state) => syncPlayers(state.players));
+    room.onStateChange(syncWorld);
     room.onLeave(() => {
       room = null;
       statusText.textContent = "Disconnected.";
@@ -130,8 +159,8 @@ function currentInput(): MovementInput {
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
   const z =
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown")) -
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp"));
+    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
+    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
   const length = Math.hypot(x, z);
 
   return length > 1 ? { x: x / length, z: z / length } : { x, z };

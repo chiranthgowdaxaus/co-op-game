@@ -7,6 +7,11 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TICK_MS = 50;
 const MOVE_SPEED = 4;
 const WORLD_LIMIT = 9;
+const PLATE_HALF_SIZE = 0.9;
+const DOOR_Z = 3;
+const DOOR_HALF_WIDTH = 3;
+const DOOR_HALF_DEPTH = 0.25;
+const PLAYER_HALF_SIZE = 0.5;
 
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
@@ -16,6 +21,8 @@ class PlayerSchema extends Schema {
 
 class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
+  @type("boolean") plateActive = false;
+  @type("boolean") doorOpen = false;
 }
 
 export class GameRoom extends Room<{ state: GameStateSchema }> {
@@ -58,9 +65,34 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       const player = this.state.players.get(sessionId);
       if (!player) return;
 
-      player.x = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, player.x + input.x * distance));
-      player.z = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, player.z + input.z * distance));
+      const nextX = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, player.x + input.x * distance),
+      );
+      const nextZ = Math.max(
+        -WORLD_LIMIT,
+        Math.min(WORLD_LIMIT, player.z + input.z * distance),
+      );
+
+      player.x = nextX;
+      if (this.state.doorOpen || !this.hitsClosedDoor(nextX, nextZ)) {
+        player.z = nextZ;
+      }
     });
+
+    this.state.plateActive = Array.from(this.state.players.values()).some(
+      (player) =>
+        Math.abs(player.x) <= PLATE_HALF_SIZE &&
+        Math.abs(player.z) <= PLATE_HALF_SIZE,
+    );
+    this.state.doorOpen = this.state.plateActive;
+  }
+
+  private hitsClosedDoor(x: number, z: number) {
+    return (
+      Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE &&
+      Math.abs(z - DOOR_Z) <= DOOR_HALF_DEPTH + PLAYER_HALF_SIZE
+    );
   }
 
   private sanitizeInput(message: unknown): MovementInput {
