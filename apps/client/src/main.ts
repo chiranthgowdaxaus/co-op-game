@@ -28,12 +28,16 @@ const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
 scene.clearColor = new Color4(0.06, 0.09, 0.14, 1);
 
-const camera = new FreeCamera("camera", new Vector3(0, 12, -14), scene);
-camera.setTarget(Vector3.Zero());
+const LEVEL_FOCUS = new Vector3(-1.2, 0, 3.5);
+const CAMERA_OFFSET = new Vector3(0, 12.5, -13.5);
+const cameraTarget = LEVEL_FOCUS.clone();
+const camera = new FreeCamera("camera", LEVEL_FOCUS.add(CAMERA_OFFSET), scene);
+camera.fov = 0.72;
+camera.setTarget(cameraTarget);
 camera.inputs.clear();
 
 const light = new HemisphericLight("light", new Vector3(0, 1, 0), scene);
-light.intensity = 0.9;
+light.intensity = 1;
 
 const ground = CreateGround("ground", { width: 20, height: 20 }, scene);
 const groundMaterial = new StandardMaterial("ground-material", scene);
@@ -42,18 +46,38 @@ ground.material = groundMaterial;
 
 const blueMaterial = new StandardMaterial("blue-player", scene);
 blueMaterial.diffuseColor = new Color3(0.2, 0.55, 1);
+blueMaterial.emissiveColor = new Color3(0.03, 0.08, 0.14);
 
 const orangeMaterial = new StandardMaterial("orange-player", scene);
 orangeMaterial.diffuseColor = new Color3(1, 0.45, 0.2);
+orangeMaterial.emissiveColor = new Color3(0.14, 0.06, 0.03);
 
 const plateInactiveMaterial = new StandardMaterial("plate-inactive", scene);
-plateInactiveMaterial.diffuseColor = new Color3(0.55, 0.45, 0.15);
+plateInactiveMaterial.diffuseColor = new Color3(0.9, 0.68, 0.18);
 
 const plateActiveMaterial = new StandardMaterial("plate-active", scene);
 plateActiveMaterial.diffuseColor = new Color3(0.2, 0.75, 0.3);
 
-const doorMaterial = new StandardMaterial("door", scene);
-doorMaterial.diffuseColor = new Color3(0.45, 0.2, 0.15);
+const doorClosedMaterial = new StandardMaterial("door-closed", scene);
+doorClosedMaterial.diffuseColor = new Color3(0.75, 0.18, 0.12);
+
+const doorOpenMaterial = new StandardMaterial("door-open", scene);
+doorOpenMaterial.diffuseColor = new Color3(0.25, 0.65, 0.3);
+
+const wallMaterial = new StandardMaterial("wall", scene);
+wallMaterial.diffuseColor = new Color3(0.3, 0.34, 0.42);
+
+const leverBaseMaterial = new StandardMaterial("lever-base", scene);
+leverBaseMaterial.diffuseColor = new Color3(0.16, 0.18, 0.22);
+
+const leverInactiveMaterial = new StandardMaterial("lever-inactive", scene);
+leverInactiveMaterial.diffuseColor = new Color3(0.95, 0.78, 0.25);
+
+const exitMaterial = new StandardMaterial("exit", scene);
+exitMaterial.diffuseColor = new Color3(0.1, 0.75, 0.65);
+
+const exitBorderMaterial = new StandardMaterial("exit-border", scene);
+exitBorderMaterial.diffuseColor = new Color3(0.35, 1, 0.85);
 
 const pressurePlate = CreateBox(
   "pressure-plate",
@@ -65,7 +89,7 @@ pressurePlate.material = plateInactiveMaterial;
 
 const door = CreateBox("door", { width: 6, height: 3, depth: 0.5 }, scene);
 door.position.set(0, 1.5, 3);
-door.material = doorMaterial;
+door.material = doorClosedMaterial;
 
 const leftWall = CreateBox(
   "left-wall",
@@ -73,7 +97,7 @@ const leftWall = CreateBox(
   scene,
 );
 leftWall.position.set(-6, 1.5, 3);
-leftWall.material = doorMaterial;
+leftWall.material = wallMaterial;
 
 const rightWall = CreateBox(
   "right-wall",
@@ -81,7 +105,7 @@ const rightWall = CreateBox(
   scene,
 );
 rightWall.position.set(6, 1.5, 3);
-rightWall.material = doorMaterial;
+rightWall.material = wallMaterial;
 
 const leverBase = CreateBox(
   "lever-base",
@@ -89,17 +113,14 @@ const leverBase = CreateBox(
   scene,
 );
 leverBase.position.set(3, 0.125, 5);
-leverBase.material = doorMaterial;
+leverBase.material = leverBaseMaterial;
 
 const leverStick = CreateBox(
   "lever-stick",
   { width: 0.15, height: 1.2, depth: 0.15 },
   scene,
 );
-leverStick.material = plateActiveMaterial;
-
-const exitMaterial = new StandardMaterial("exit", scene);
-exitMaterial.diffuseColor = new Color3(0.2, 0.65, 0.45);
+leverStick.material = leverInactiveMaterial;
 
 const exitZone = CreateBox(
   "exit-zone",
@@ -108,6 +129,30 @@ const exitZone = CreateBox(
 );
 exitZone.position.set(0, 0.04, 7);
 exitZone.material = exitMaterial;
+
+const exitBack = CreateBox("exit-back", { width: 4, height: 0.12, depth: 0.12 }, scene);
+exitBack.position.set(0, 0.1, 8.5);
+exitBack.material = exitBorderMaterial;
+
+const exitFront = CreateBox(
+  "exit-front",
+  { width: 4, height: 0.12, depth: 0.12 },
+  scene,
+);
+exitFront.position.set(0, 0.1, 5.5);
+exitFront.material = exitBorderMaterial;
+
+const exitLeft = CreateBox("exit-left", { width: 0.12, height: 0.12, depth: 3 }, scene);
+exitLeft.position.set(-2, 0.1, 7);
+exitLeft.material = exitBorderMaterial;
+
+const exitRight = CreateBox(
+  "exit-right",
+  { width: 0.12, height: 0.12, depth: 3 },
+  scene,
+);
+exitRight.position.set(2, 0.1, 7);
+exitRight.material = exitBorderMaterial;
 
 const meshes = new Map<string, Mesh>();
 const targets = new Map<string, PlayerState>();
@@ -165,8 +210,12 @@ function syncWorld(state: RoomState) {
     ? plateActiveMaterial
     : plateInactiveMaterial;
   door.position.y = state.doorOpen ? 4.5 : 1.5;
+  door.material = state.doorOpen ? doorOpenMaterial : doorClosedMaterial;
   const leverAngle = state.leverActive ? 0.6 : -0.6;
   leverStick.rotation.z = leverAngle;
+  leverStick.material = state.leverActive
+    ? plateActiveMaterial
+    : leverInactiveMaterial;
   leverStick.position.set(
     3 - Math.sin(leverAngle) * 0.6,
     0.25 + Math.cos(leverAngle) * 0.6,
@@ -195,6 +244,25 @@ function syncInteractionPrompt(state: RoomState) {
       LEVER_PROMPT_DISTANCE;
 
   interactionText.hidden = state.leverActive || !nearLever;
+}
+
+function updateCamera(blend: number) {
+  const localTarget = room ? targets.get(room.sessionId) : undefined;
+  const targetX = localTarget
+    ? LEVEL_FOCUS.x + localTarget.x * 0.22
+    : LEVEL_FOCUS.x;
+  const targetZ = localTarget
+    ? LEVEL_FOCUS.z + (localTarget.z - LEVEL_FOCUS.z) * 0.24
+    : LEVEL_FOCUS.z;
+
+  cameraTarget.x += (targetX - cameraTarget.x) * blend;
+  cameraTarget.z += (targetZ - cameraTarget.z) * blend;
+  camera.position.set(
+    cameraTarget.x + CAMERA_OFFSET.x,
+    cameraTarget.y + CAMERA_OFFSET.y,
+    cameraTarget.z + CAMERA_OFFSET.z,
+  );
+  camera.setTarget(cameraTarget);
 }
 
 function capitalize(value: string) {
@@ -297,7 +365,9 @@ window.addEventListener("blur", () => {
 window.addEventListener("resize", () => engine.resize());
 
 engine.runRenderLoop(() => {
-  const blend = Math.min(1, engine.getDeltaTime() / 80);
+  const deltaTime = engine.getDeltaTime();
+  const blend = Math.min(1, deltaTime / 80);
+  const cameraBlend = Math.min(1, deltaTime / 240);
 
   meshes.forEach((mesh, sessionId) => {
     const target = targets.get(sessionId);
@@ -306,5 +376,6 @@ engine.runRenderLoop(() => {
     mesh.position.z += (target.z - mesh.position.z) * blend;
   });
 
+  updateCamera(cameraBlend);
   scene.render();
 });
