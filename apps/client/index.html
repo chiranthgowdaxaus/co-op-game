@@ -10,12 +10,6 @@
 
     <main class="panel">
       <h1>Co-op Game</h1>
-      <fieldset class="character-select">
-        <legend>Choose character</legend>
-        <label><input type="radio" name="character" value="water" /> Water</label>
-        <label><input type="radio" name="character" value="fire" /> Fire</label>
-      </fieldset>
-
       <button id="create-room" type="button">Create room</button>
 
       <form id="join-room">
@@ -34,6 +28,11 @@
       <p id="identity" hidden></p>
       <p id="partner" hidden></p>
       <p id="status">Create or join a room.</p>
+      <section id="character-panel" class="character-select" hidden>
+        <p id="character-status">Choose your character</p>
+        <button id="choose-water" type="button">Choose Water</button>
+        <button id="choose-fire" type="button">Choose Fire</button>
+      </section>
       <p class="objective">
         Hold the pressure plate to open the door.<br />
         Help your partner reach the lever.<br />

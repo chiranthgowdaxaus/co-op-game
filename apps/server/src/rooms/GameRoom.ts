@@ -1,6 +1,11 @@
 import { MapSchema, Schema, type } from "@colyseus/schema";
 import { Client, Room } from "colyseus";
-import type { MovementInput, PlayerCharacter } from "@coop/shared";
+import type {
+  CharacterSelection,
+  MovementInput,
+  PlayerCharacter,
+  PlayerCharacterState,
+} from "@coop/shared";
 
 const ROOM_CODES = "$room_codes";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -24,7 +29,7 @@ const EXIT_HALF_DEPTH = 1.5;
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
   @type("float32") z = 0;
-  @type("string") character: PlayerCharacter = "water";
+  @type("string") character: PlayerCharacterState = "";
 }
 
 class GameStateSchema extends Schema {
@@ -49,7 +54,26 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       this.inputs.set(client.sessionId, this.sanitizeInput(message));
     });
 
+    this.onMessage("selectCharacter", (client, message: unknown) => {
+      const player = this.state.players.get(client.sessionId);
+      const character = this.getSelectedCharacter(message);
+
+      if (!player || player.character) return;
+      if (!character) {
+        client.send("selectionError", "Choose Water or Fire");
+        return;
+      }
+      if (this.isCharacterTaken(character)) {
+        client.send("selectionError", `${this.characterName(character)} is already taken`);
+        return;
+      }
+
+      player.character = character;
+    });
+
     this.onMessage("interact", (client) => {
+      if (!this.gameReady()) return;
+
       const player = this.state.players.get(client.sessionId);
       if (
         player &&
@@ -68,18 +92,9 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.setSimulationInterval((deltaTime) => this.updatePlayers(deltaTime), TICK_MS);
   }
 
-  onJoin(client: Client, options: unknown) {
-    const character = this.getJoinCharacter(options);
-    if (!character) {
-      throw new Error("Choose Water or Fire");
-    }
-    if (this.isCharacterTaken(character)) {
-      throw new Error(`${this.characterName(character)} is already taken`);
-    }
-
+  onJoin(client: Client) {
     const player = new PlayerSchema();
     player.x = this.state.players.size === 0 ? -2 : 2;
-    player.character = character;
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, { x: 0, z: 0 });
   }
@@ -94,6 +109,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private updatePlayers(deltaTime: number) {
+    if (!this.gameReady()) return;
+
     const distance = MOVE_SPEED * (deltaTime / 1000);
 
     this.inputs.forEach((input, sessionId) => {
@@ -173,6 +190,15 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.doorOpen = this.state.plateActive || this.state.leverActive;
   }
 
+  private gameReady() {
+    return (
+      this.state.players.size === 2 &&
+      Array.from(this.state.players.values()).every((player) =>
+        this.hasCharacter(player.character),
+      )
+    );
+  }
+
   private pushPlayersOutOfDoor() {
     const safeOffset =
       DOOR_HALF_DEPTH + PLAYER_HALF_SIZE + COLLISION_MARGIN;
@@ -204,10 +230,11 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     return length > 1 ? { x: x / length, z: z / length } : { x, z };
   }
 
-  private getJoinCharacter(options: unknown): PlayerCharacter | null {
-    if (!options || typeof options !== "object") return null;
+  private getSelectedCharacter(message: unknown): PlayerCharacter | null {
+    if (!message || typeof message !== "object") return null;
 
-    const character = (options as { character?: unknown }).character;
+    const selection = message as Partial<CharacterSelection>;
+    const character = selection.character;
     return character === "water" || character === "fire" ? character : null;
   }
 
@@ -219,6 +246,10 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   private characterName(character: PlayerCharacter) {
     return character === "water" ? "Water" : "Fire";
+  }
+
+  private hasCharacter(character: PlayerCharacterState): character is PlayerCharacter {
+    return character === "water" || character === "fire";
   }
 
   private async generateRoomCode() {

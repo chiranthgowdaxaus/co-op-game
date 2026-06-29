@@ -5,14 +5,16 @@ export interface MovementInput {
 
 export type PlayerCharacter = "water" | "fire";
 
-export interface JoinOptions {
+export type PlayerCharacterState = PlayerCharacter | "";
+
+export interface CharacterSelection {
   character: PlayerCharacter;
 }
 
 export interface PlayerState {
   x: number;
   z: number;
-  character: PlayerCharacter;
+  character: PlayerCharacterState;
 }
 
 export interface RoomState {

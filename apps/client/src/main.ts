@@ -11,9 +11,10 @@ import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Client, Room } from "@colyseus/sdk";
 import type {
-  JoinOptions,
+  CharacterSelection,
   MovementInput,
   PlayerCharacter,
+  PlayerCharacterState,
   PlayerState,
   RoomState,
 } from "@coop/shared";
@@ -32,8 +33,14 @@ const gameStatusText =
   document.querySelector<HTMLParagraphElement>("#game-status")!;
 const leverStatusText =
   document.querySelector<HTMLParagraphElement>("#lever-status")!;
-const characterInputs =
-  document.querySelectorAll<HTMLInputElement>("input[name='character']");
+const characterPanel =
+  document.querySelector<HTMLElement>("#character-panel")!;
+const characterStatusText =
+  document.querySelector<HTMLParagraphElement>("#character-status")!;
+const chooseWaterButton =
+  document.querySelector<HTMLButtonElement>("#choose-water")!;
+const chooseFireButton =
+  document.querySelector<HTMLButtonElement>("#choose-fire")!;
 
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
@@ -190,20 +197,22 @@ const LEVER_PROMPT_DISTANCE = 1.5;
 
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
+let canPlay = false;
 
 function syncPlayers(players: Map<string, PlayerState>) {
-  const activePlayers = new Set<string>();
+  const visiblePlayers = new Set<string>();
   let partner: PlayerState | undefined;
 
   players.forEach((player, sessionId) => {
-    activePlayers.add(sessionId);
     targets.set(sessionId, {
       x: player.x,
       z: player.z,
       character: player.character,
     });
     if (sessionId !== room?.sessionId) partner = player;
+    if (!canPlay || !isCharacter(player.character)) return;
 
+    visiblePlayers.add(sessionId);
     if (!meshes.has(sessionId)) {
       const body = CreateSphere(
         `player-${sessionId}`,
@@ -231,19 +240,26 @@ function syncPlayers(players: Map<string, PlayerState>) {
 
   const localPlayer = room ? players.get(room.sessionId) : undefined;
   if (localPlayer) {
-    identityText.hidden = false;
-    identityText.textContent = `You are ${characterName(localPlayer.character)}`;
+    const localCharacter = localPlayer.character;
+    const localReady = isCharacter(localCharacter);
+    identityText.hidden = !localReady;
+    if (localReady) {
+      identityText.textContent = `You are ${characterName(localCharacter)}`;
+    }
+
+    const partnerCharacter = partner?.character;
     partnerText.hidden = false;
-    partnerText.textContent = partner
-      ? `Partner: ${characterName(partner.character)}`
-      : "Partner: Waiting";
+    partnerText.textContent =
+      partnerCharacter && isCharacter(partnerCharacter)
+        ? `Partner: ${characterName(partnerCharacter)}`
+        : "Partner: Waiting";
   }
 
   statusText.textContent =
     players.size === 2 ? "Partner joined. 2/2" : "Waiting for partner... 1/2";
 
   meshes.forEach((mesh, sessionId) => {
-    if (activePlayers.has(sessionId)) return;
+    if (visiblePlayers.has(sessionId)) return;
     mesh.body.dispose();
     mesh.aura.dispose();
     meshes.delete(sessionId);
@@ -252,8 +268,8 @@ function syncPlayers(players: Map<string, PlayerState>) {
 }
 
 function syncWorld(state: RoomState) {
+  syncCharacterSelection(state);
   syncPlayers(state.players);
-  syncInteractionPrompt(state);
   pressurePlate.material = state.plateActive
     ? plateActiveMaterial
     : plateInactiveMaterial;
@@ -269,9 +285,9 @@ function syncWorld(state: RoomState) {
     0.25 + Math.cos(leverAngle) * 0.6,
     5,
   );
-  leverStatusText.hidden = false;
+  leverStatusText.hidden = !canPlay;
   leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
-  gameStatusText.hidden = false;
+  gameStatusText.hidden = !canPlay;
   gameStatusText.textContent = state.levelComplete
     ? "Level complete"
     : state.playersAtExit > 0
@@ -281,6 +297,8 @@ function syncWorld(state: RoomState) {
         : state.plateActive
           ? "Pressure plate active"
           : "Door closed";
+  syncInteractionPrompt(state);
+  if (canPlay) sendInput();
 }
 
 const interactionText =
@@ -293,7 +311,29 @@ function syncInteractionPrompt(state: RoomState) {
     Math.hypot(localPlayer.x - LEVER_X, localPlayer.z - LEVER_Z) <=
       LEVER_PROMPT_DISTANCE;
 
-  interactionText.hidden = !nearLever;
+  interactionText.hidden = !canPlay || !nearLever;
+}
+
+function syncCharacterSelection(state: RoomState) {
+  const localPlayer = room ? state.players.get(room.sessionId) : undefined;
+  const players = Array.from(state.players.values());
+  const localReady = !!localPlayer && isCharacter(localPlayer.character);
+  const allReady =
+    state.players.size === 2 &&
+    players.every((player) => isCharacter(player.character));
+  const waterTaken = players.some((player) => player.character === "water");
+  const fireTaken = players.some((player) => player.character === "fire");
+
+  canPlay = allReady;
+  characterPanel.hidden = !room || allReady;
+  characterStatusText.textContent = localReady
+    ? "Waiting for partner to choose..."
+    : "Choose your character";
+
+  chooseWaterButton.disabled = localReady || waterTaken;
+  chooseWaterButton.textContent = waterTaken ? "Water taken" : "Choose Water";
+  chooseFireButton.disabled = localReady || fireTaken;
+  chooseFireButton.textContent = fireTaken ? "Fire taken" : "Choose Fire";
 }
 
 function updateCamera(blend: number) {
@@ -327,31 +367,20 @@ function characterName(character: PlayerCharacter) {
   return character === "water" ? "Water" : "Fire";
 }
 
-function selectedJoinOptions(): JoinOptions | null {
-  const selected = Array.from(characterInputs).find((input) => input.checked);
-  const character = selected?.value;
-  if (character === "water" || character === "fire") {
-    return { character };
-  }
-
-  statusText.textContent = "Choose Water or Fire.";
-  return null;
+function isCharacter(
+  character: PlayerCharacterState,
+): character is PlayerCharacter {
+  return character === "water" || character === "fire";
 }
 
 function setConnectControlsDisabled(disabled: boolean) {
   createButton.disabled = disabled;
   joinButton.disabled = disabled;
   roomCodeInput.disabled = disabled;
-  characterInputs.forEach((input) => {
-    input.disabled = disabled;
-  });
 }
 
 function connectionErrorMessage(message: string) {
-  if (/water.*already taken/i.test(message)) return "Water is already taken";
-  if (/fire.*already taken/i.test(message)) return "Fire is already taken";
   if (/locked|already full/i.test(message)) return "Room is full";
-  if (/choose.*water.*fire/i.test(message)) return "Choose Water or Fire.";
 
   return message || "Could not connect.";
 }
@@ -368,8 +397,13 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     statusText.textContent = "Waiting for partner... 1/2";
 
     room.onStateChange(syncWorld);
+    room.onMessage("selectionError", (message: string) => {
+      statusText.textContent = message;
+    });
     room.onLeave(() => {
       room = null;
+      canPlay = false;
+      characterPanel.hidden = true;
       statusText.textContent = "Disconnected.";
     });
 
@@ -394,7 +428,7 @@ function currentInput(): MovementInput {
 }
 
 function sendInput() {
-  if (!room) return;
+  if (!room || !canPlay) return;
 
   const input = currentInput();
   if (input.x === lastInput.x && input.z === lastInput.z) return;
@@ -404,10 +438,7 @@ function sendInput() {
 }
 
 createButton.addEventListener("click", () => {
-  const options = selectedJoinOptions();
-  if (!options) return;
-
-  void connect(() => client.create<RoomState>("game", options));
+  void connect(() => client.create<RoomState>("game"));
 });
 
 joinForm.addEventListener("submit", (event) => {
@@ -418,10 +449,20 @@ joinForm.addEventListener("submit", (event) => {
     return;
   }
 
-  const options = selectedJoinOptions();
-  if (!options) return;
+  void connect(() => client.joinById<RoomState>(code));
+});
 
-  void connect(() => client.joinById<RoomState>(code, options));
+function selectCharacter(character: PlayerCharacter) {
+  const selection: CharacterSelection = { character };
+  room?.send("selectCharacter", selection);
+}
+
+chooseWaterButton.addEventListener("click", () => {
+  selectCharacter("water");
+});
+
+chooseFireButton.addEventListener("click", () => {
+  selectCharacter("fire");
 });
 
 roomCodeInput.addEventListener("input", () => {
@@ -430,7 +471,7 @@ roomCodeInput.addEventListener("input", () => {
 
 window.addEventListener("keydown", (event) => {
   if (event.code === "KeyE") {
-    if (!event.repeat) room?.send("interact");
+    if (!event.repeat && canPlay) room?.send("interact");
     return;
   }
   if (!event.code.startsWith("Arrow") && !event.code.startsWith("Key")) return;

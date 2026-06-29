@@ -46,29 +46,17 @@ form {
 
 .character-select {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
-  margin: 0 0 0.75rem;
+  margin-top: 0.75rem;
   padding: 0;
-  border: 0;
 }
 
-.character-select legend {
+.character-select p {
   width: 100%;
-  margin-bottom: 0.35rem;
+  margin: 0;
   color: #cbd5e1;
   font-size: 0.875rem;
-}
-
-.character-select label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.character-select input {
-  min-height: auto;
-  flex: 0;
-  padding: 0;
 }
 
 button,
