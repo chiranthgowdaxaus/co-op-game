@@ -25,3 +25,5 @@ export interface RoomState {
   playersAtExit: number;
   levelComplete: boolean;
 }
+
+export * from "./levels.js";
