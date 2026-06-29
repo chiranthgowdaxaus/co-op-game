@@ -6,10 +6,17 @@ import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.pure.js";
 import { CreateGround } from "@babylonjs/core/Meshes/Builders/groundBuilder.pure.js";
+import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Client, Room } from "@colyseus/sdk";
-import type { MovementInput, PlayerState, RoomState } from "@coop/shared";
+import type {
+  JoinOptions,
+  MovementInput,
+  PlayerCharacter,
+  PlayerState,
+  RoomState,
+} from "@coop/shared";
 import "./style.css";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#renderCanvas")!;
@@ -23,6 +30,10 @@ const partnerText = document.querySelector<HTMLParagraphElement>("#partner")!;
 const statusText = document.querySelector<HTMLParagraphElement>("#status")!;
 const gameStatusText =
   document.querySelector<HTMLParagraphElement>("#game-status")!;
+const leverStatusText =
+  document.querySelector<HTMLParagraphElement>("#lever-status")!;
+const characterInputs =
+  document.querySelectorAll<HTMLInputElement>("input[name='character']");
 
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
@@ -51,6 +62,16 @@ blueMaterial.emissiveColor = new Color3(0.03, 0.08, 0.14);
 const orangeMaterial = new StandardMaterial("orange-player", scene);
 orangeMaterial.diffuseColor = new Color3(1, 0.45, 0.2);
 orangeMaterial.emissiveColor = new Color3(0.14, 0.06, 0.03);
+
+const waterAuraMaterial = new StandardMaterial("water-aura", scene);
+waterAuraMaterial.diffuseColor = new Color3(0.25, 0.7, 1);
+waterAuraMaterial.emissiveColor = new Color3(0.05, 0.2, 0.35);
+waterAuraMaterial.alpha = 0.28;
+
+const fireAuraMaterial = new StandardMaterial("fire-aura", scene);
+fireAuraMaterial.diffuseColor = new Color3(1, 0.5, 0.12);
+fireAuraMaterial.emissiveColor = new Color3(0.35, 0.12, 0.02);
+fireAuraMaterial.alpha = 0.28;
 
 const plateInactiveMaterial = new StandardMaterial("plate-inactive", scene);
 plateInactiveMaterial.diffuseColor = new Color3(0.9, 0.68, 0.18);
@@ -154,7 +175,12 @@ const exitRight = CreateBox(
 exitRight.position.set(2, 0.1, 7);
 exitRight.material = exitBorderMaterial;
 
-const meshes = new Map<string, Mesh>();
+interface PlayerMeshes {
+  body: Mesh;
+  aura: Mesh;
+}
+
+const meshes = new Map<string, PlayerMeshes>();
 const targets = new Map<string, PlayerState>();
 const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567");
 const pressedKeys = new Set<string>();
@@ -171,24 +197,45 @@ function syncPlayers(players: Map<string, PlayerState>) {
 
   players.forEach((player, sessionId) => {
     activePlayers.add(sessionId);
-    targets.set(sessionId, { x: player.x, z: player.z, color: player.color });
+    targets.set(sessionId, {
+      x: player.x,
+      z: player.z,
+      character: player.character,
+    });
     if (sessionId !== room?.sessionId) partner = player;
 
     if (!meshes.has(sessionId)) {
-      const mesh = CreateBox(`player-${sessionId}`, { size: 1 }, scene);
-      mesh.position.set(player.x, 0.5, player.z);
-      mesh.material = player.color === "blue" ? blueMaterial : orangeMaterial;
-      meshes.set(sessionId, mesh);
+      const body = CreateSphere(
+        `player-${sessionId}`,
+        { diameter: 1, segments: 16 },
+        scene,
+      );
+      body.position.set(player.x, 0.5, player.z);
+      body.material = playerMaterial(player.character);
+
+      const aura = CreateSphere(
+        `player-aura-${sessionId}`,
+        { diameter: 1.35, segments: 12 },
+        scene,
+      );
+      aura.position.copyFrom(body.position);
+      aura.material = auraMaterial(player.character);
+
+      meshes.set(sessionId, { body, aura });
+    } else {
+      const mesh = meshes.get(sessionId)!;
+      mesh.body.material = playerMaterial(player.character);
+      mesh.aura.material = auraMaterial(player.character);
     }
   });
 
   const localPlayer = room ? players.get(room.sessionId) : undefined;
   if (localPlayer) {
     identityText.hidden = false;
-    identityText.textContent = `You are ${capitalize(localPlayer.color)}`;
+    identityText.textContent = `You are ${characterName(localPlayer.character)}`;
     partnerText.hidden = false;
     partnerText.textContent = partner
-      ? `Partner: ${capitalize(partner.color)}`
+      ? `Partner: ${characterName(partner.character)}`
       : "Partner: Waiting";
   }
 
@@ -197,7 +244,8 @@ function syncPlayers(players: Map<string, PlayerState>) {
 
   meshes.forEach((mesh, sessionId) => {
     if (activePlayers.has(sessionId)) return;
-    mesh.dispose();
+    mesh.body.dispose();
+    mesh.aura.dispose();
     meshes.delete(sessionId);
     targets.delete(sessionId);
   });
@@ -221,13 +269,15 @@ function syncWorld(state: RoomState) {
     0.25 + Math.cos(leverAngle) * 0.6,
     5,
   );
+  leverStatusText.hidden = false;
+  leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
   gameStatusText.hidden = false;
   gameStatusText.textContent = state.levelComplete
     ? "Level complete"
     : state.playersAtExit > 0
       ? "Waiting for partner at exit"
       : state.leverActive
-        ? "Lever activated"
+        ? "Lever on"
         : state.plateActive
           ? "Pressure plate active"
           : "Door closed";
@@ -243,7 +293,7 @@ function syncInteractionPrompt(state: RoomState) {
     Math.hypot(localPlayer.x - LEVER_X, localPlayer.z - LEVER_Z) <=
       LEVER_PROMPT_DISTANCE;
 
-  interactionText.hidden = state.leverActive || !nearLever;
+  interactionText.hidden = !nearLever;
 }
 
 function updateCamera(blend: number) {
@@ -265,14 +315,49 @@ function updateCamera(blend: number) {
   camera.setTarget(cameraTarget);
 }
 
-function capitalize(value: string) {
-  return value[0].toUpperCase() + value.slice(1);
+function playerMaterial(character: PlayerCharacter) {
+  return character === "water" ? blueMaterial : orangeMaterial;
+}
+
+function auraMaterial(character: PlayerCharacter) {
+  return character === "water" ? waterAuraMaterial : fireAuraMaterial;
+}
+
+function characterName(character: PlayerCharacter) {
+  return character === "water" ? "Water" : "Fire";
+}
+
+function selectedJoinOptions(): JoinOptions | null {
+  const selected = Array.from(characterInputs).find((input) => input.checked);
+  const character = selected?.value;
+  if (character === "water" || character === "fire") {
+    return { character };
+  }
+
+  statusText.textContent = "Choose Water or Fire.";
+  return null;
+}
+
+function setConnectControlsDisabled(disabled: boolean) {
+  createButton.disabled = disabled;
+  joinButton.disabled = disabled;
+  roomCodeInput.disabled = disabled;
+  characterInputs.forEach((input) => {
+    input.disabled = disabled;
+  });
+}
+
+function connectionErrorMessage(message: string) {
+  if (/water.*already taken/i.test(message)) return "Water is already taken";
+  if (/fire.*already taken/i.test(message)) return "Fire is already taken";
+  if (/locked|already full/i.test(message)) return "Room is full";
+  if (/choose.*water.*fire/i.test(message)) return "Choose Water or Fire.";
+
+  return message || "Could not connect.";
 }
 
 async function connect(action: () => Promise<Room<RoomState>>) {
-  createButton.disabled = true;
-  joinButton.disabled = true;
-  roomCodeInput.disabled = true;
+  setConnectControlsDisabled(true);
   statusText.textContent = "Connecting…";
 
   try {
@@ -290,13 +375,9 @@ async function connect(action: () => Promise<Room<RoomState>>) {
 
     sendInput();
   } catch (error) {
-    createButton.disabled = false;
-    joinButton.disabled = false;
-    roomCodeInput.disabled = false;
+    setConnectControlsDisabled(false);
     const message = error instanceof Error ? error.message : "";
-    statusText.textContent = /locked|already full/i.test(message)
-      ? "Room is full"
-      : message || "Could not connect.";
+    statusText.textContent = connectionErrorMessage(message);
   }
 }
 
@@ -323,7 +404,10 @@ function sendInput() {
 }
 
 createButton.addEventListener("click", () => {
-  void connect(() => client.create<RoomState>("game"));
+  const options = selectedJoinOptions();
+  if (!options) return;
+
+  void connect(() => client.create<RoomState>("game", options));
 });
 
 joinForm.addEventListener("submit", (event) => {
@@ -334,7 +418,10 @@ joinForm.addEventListener("submit", (event) => {
     return;
   }
 
-  void connect(() => client.joinById<RoomState>(code));
+  const options = selectedJoinOptions();
+  if (!options) return;
+
+  void connect(() => client.joinById<RoomState>(code, options));
 });
 
 roomCodeInput.addEventListener("input", () => {
@@ -369,11 +456,12 @@ engine.runRenderLoop(() => {
   const blend = Math.min(1, deltaTime / 80);
   const cameraBlend = Math.min(1, deltaTime / 240);
 
-  meshes.forEach((mesh, sessionId) => {
+  meshes.forEach(({ body, aura }, sessionId) => {
     const target = targets.get(sessionId);
     if (!target) return;
-    mesh.position.x += (target.x - mesh.position.x) * blend;
-    mesh.position.z += (target.z - mesh.position.z) * blend;
+    body.position.x += (target.x - body.position.x) * blend;
+    body.position.z += (target.z - body.position.z) * blend;
+    aura.position.copyFrom(body.position);
   });
 
   updateCamera(cameraBlend);

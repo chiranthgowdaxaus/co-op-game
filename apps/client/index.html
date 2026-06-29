@@ -10,6 +10,12 @@
 
     <main class="panel">
       <h1>Co-op Game</h1>
+      <fieldset class="character-select">
+        <legend>Choose character</legend>
+        <label><input type="radio" name="character" value="water" /> Water</label>
+        <label><input type="radio" name="character" value="fire" /> Fire</label>
+      </fieldset>
+
       <button id="create-room" type="button">Create room</button>
 
       <form id="join-room">
@@ -35,7 +41,8 @@
         Both players must reach the exit.
       </p>
       <p id="game-status" hidden></p>
-      <p id="interaction" hidden>Press E to flip lever</p>
+      <p id="lever-status" hidden></p>
+      <p id="interaction" hidden>Press E to toggle lever</p>
       <p class="controls">Move: WASD or arrow keys · Interact: E</p>
     </main>
 
