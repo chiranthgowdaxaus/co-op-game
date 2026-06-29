@@ -77,11 +77,19 @@ input {
 }
 
 #status,
+.objective,
+#interaction,
 .controls {
   margin-bottom: 0;
   color: #cbd5e1;
 }
 
+.objective,
+#interaction,
 .controls {
   font-size: 0.875rem;
+}
+
+#interaction {
+  color: #fde68a;
 }
