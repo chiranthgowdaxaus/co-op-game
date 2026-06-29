@@ -3,6 +3,8 @@ import { Client, Room } from "colyseus";
 import type {
   CharacterSelection,
   LevelBox,
+  LevelGem,
+  LevelHazard,
   LevelRect,
   MovementInput,
   PlayerCharacter,
@@ -21,15 +23,18 @@ const COLLISION_MARGIN = 0.01;
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
   @type("float32") z = 0;
+  @type("uint8") spawnIndex = 0;
   @type("string") character: PlayerCharacterState = "";
 }
 
 class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
+  @type({ map: "boolean" }) collectedGems = new MapSchema<boolean>();
   @type("boolean") plateActive = false;
   @type("boolean") leverActive = false;
   @type("boolean") doorOpen = false;
   @type("uint8") playersAtExit = 0;
+  @type("boolean") exitBlocked = false;
   @type("boolean") levelComplete = false;
 }
 
@@ -41,6 +46,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   async onCreate() {
     this.roomId = await this.generateRoomCode();
     this.setState(new GameStateSchema());
+    LEVEL.gems.forEach((gem) => this.state.collectedGems.set(gem.id, false));
 
     this.onMessage("input", (client, message: unknown) => {
       this.inputs.set(client.sessionId, this.sanitizeInput(message));
@@ -89,7 +95,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   onJoin(client: Client) {
     const player = new PlayerSchema();
-    const spawn = LEVEL.playerSpawns[this.state.players.size] ?? LEVEL.playerSpawns[0];
+    player.spawnIndex = this.state.players.size;
+    const spawn = this.spawnFor(player);
     player.x = spawn.x;
     player.z = spawn.z;
     this.state.players.set(client.sessionId, player);
@@ -131,6 +138,9 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       }
     });
 
+    this.checkHazards();
+    this.checkGems();
+
     const wasDoorOpen = this.state.doorOpen;
     this.state.plateActive = Array.from(this.state.players.values()).some(
       (player) =>
@@ -146,7 +156,16 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       (player) =>
         LEVEL.exits.some((exit) => this.pointInRect(player.x, player.z, exit)),
     ).length;
-    if (this.state.players.size === 2 && this.state.playersAtExit === 2) {
+    const allRequiredGemsCollected = this.requiredGemsCollected();
+    this.state.exitBlocked =
+      this.state.players.size === 2 &&
+      this.state.playersAtExit === 2 &&
+      !allRequiredGemsCollected;
+    if (
+      this.state.players.size === 2 &&
+      this.state.playersAtExit === 2 &&
+      allRequiredGemsCollected
+    ) {
       this.state.levelComplete = true;
     }
   }
@@ -193,6 +212,82 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       Math.abs(x - rect.x) <= rect.width / 2 &&
       Math.abs(z - rect.z) <= rect.depth / 2
     );
+  }
+
+  private playerOverlapsHazard(player: PlayerSchema, hazard: LevelHazard) {
+    return (
+      Math.abs(player.x - hazard.position.x) <=
+        hazard.size.width / 2 + LEVEL.playerRadius &&
+      Math.abs(player.z - hazard.position.z) <=
+        hazard.size.depth / 2 + LEVEL.playerRadius
+    );
+  }
+
+  private playerOverlapsGem(player: PlayerSchema, gem: LevelGem) {
+    return (
+      Math.hypot(player.x - gem.position.x, player.z - gem.position.z) <=
+      LEVEL.playerRadius + gem.radius
+    );
+  }
+
+  private checkHazards() {
+    this.state.players.forEach((player) => {
+      if (!this.hasCharacter(player.character)) return;
+
+      const hazard = LEVEL.hazards.find((candidate) =>
+        this.playerOverlapsHazard(player, candidate),
+      );
+      if (!hazard || this.isSafeHazard(player.character, hazard)) return;
+
+      this.respawnPlayer(player);
+      this.broadcast("hazardStatus", this.hazardMessage(player.character, hazard));
+    });
+  }
+
+  private checkGems() {
+    this.state.players.forEach((player) => {
+      if (!this.hasCharacter(player.character)) return;
+
+      LEVEL.gems.forEach((gem) => {
+        if (this.state.collectedGems.get(gem.id)) return;
+        if (gem.type !== player.character) return;
+        if (!this.playerOverlapsGem(player, gem)) return;
+
+        this.state.collectedGems.set(gem.id, true);
+        this.broadcast("gemStatus", `${this.characterName(player.character)} gem collected`);
+      });
+    });
+  }
+
+  private requiredGemsCollected() {
+    return LEVEL.gems.every(
+      (gem) => !gem.required || this.state.collectedGems.get(gem.id),
+    );
+  }
+
+  private isSafeHazard(character: PlayerCharacter, hazard: LevelHazard) {
+    return (
+      (character === "water" && hazard.type === "water") ||
+      (character === "fire" && hazard.type === "lava")
+    );
+  }
+
+  private hazardMessage(character: PlayerCharacter, hazard: LevelHazard) {
+    if (hazard.type === "poison") return "Player touched poison and respawned";
+
+    return `${this.characterName(character)} touched ${
+      hazard.type === "lava" ? "lava" : "water"
+    } and respawned`;
+  }
+
+  private respawnPlayer(player: PlayerSchema) {
+    const spawn = this.spawnFor(player);
+    player.x = spawn.x;
+    player.z = spawn.z;
+  }
+
+  private spawnFor(player: PlayerSchema) {
+    return LEVEL.playerSpawns[player.spawnIndex] ?? LEVEL.playerSpawns[0];
   }
 
   private circleIntersectsBox(x: number, z: number, box: LevelBox) {

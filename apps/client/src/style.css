@@ -94,6 +94,9 @@ input {
 #status,
 .objective,
 #lever-status,
+#gem-progress,
+#gem-status,
+#hazard-status,
 #interaction,
 .controls {
   margin-bottom: 0;
@@ -102,9 +105,20 @@ input {
 
 .objective,
 #lever-status,
+#gem-progress,
+#gem-status,
+#hazard-status,
 #interaction,
 .controls {
   font-size: 0.875rem;
+}
+
+#gem-status {
+  color: #93c5fd;
+}
+
+#hazard-status {
+  color: #fca5a5;
 }
 
 #interaction {

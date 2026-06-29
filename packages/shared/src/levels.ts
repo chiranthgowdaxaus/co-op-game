@@ -46,6 +46,28 @@ export interface LevelExit extends LevelBox {
   borderHeight: number;
 }
 
+export type LevelHazardType = "water" | "lava" | "poison";
+
+export interface LevelHazard {
+  id: string;
+  type: LevelHazardType;
+  position: LevelPoint;
+  size: {
+    width: number;
+    depth: number;
+  };
+}
+
+export type LevelGemType = "water" | "fire";
+
+export interface LevelGem {
+  id: string;
+  type: LevelGemType;
+  position: LevelPoint;
+  radius: number;
+  required: boolean;
+}
+
 export interface LevelDefinition {
   id: string;
   name: string;
@@ -58,6 +80,8 @@ export interface LevelDefinition {
   pressurePlates: LevelPressurePlate[];
   levers: LevelLever[];
   exits: LevelExit[];
+  hazards: LevelHazard[];
+  gems: LevelGem[];
 }
 
 export const TUTORIAL_LEVEL: LevelDefinition = {
@@ -108,6 +132,42 @@ export const TUTORIAL_LEVEL: LevelDefinition = {
       height: 0.08,
       depth: 3,
       borderHeight: 0.12,
+    },
+  ],
+  hazards: [
+    {
+      id: "water-pool",
+      type: "water",
+      position: { x: -3, z: 5 },
+      size: { width: 1.8, depth: 1.8 },
+    },
+    {
+      id: "lava-pool",
+      type: "lava",
+      position: { x: 3, z: 6.5 },
+      size: { width: 1.8, depth: 1.8 },
+    },
+    {
+      id: "poison-pool",
+      type: "poison",
+      position: { x: 0, z: -3 },
+      size: { width: 1.8, depth: 1.4 },
+    },
+  ],
+  gems: [
+    {
+      id: "water-gem",
+      type: "water",
+      position: { x: -4, z: -1.8 },
+      radius: 0.35,
+      required: true,
+    },
+    {
+      id: "fire-gem",
+      type: "fire",
+      position: { x: 4, z: 4.5 },
+      radius: 0.35,
+      required: true,
     },
   ],
 };
