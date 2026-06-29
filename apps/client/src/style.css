@@ -44,6 +44,21 @@ form {
   margin-top: 0.5rem;
 }
 
+.character-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0;
+}
+
+.character-select p {
+  width: 100%;
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 0.875rem;
+}
+
 button,
 input {
   min-height: 2.5rem;
@@ -78,6 +93,7 @@ input {
 
 #status,
 .objective,
+#lever-status,
 #interaction,
 .controls {
   margin-bottom: 0;
@@ -85,6 +101,7 @@ input {
 }
 
 .objective,
+#lever-status,
 #interaction,
 .controls {
   font-size: 0.875rem;

@@ -6,10 +6,18 @@ import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.pure.js";
 import { CreateGround } from "@babylonjs/core/Meshes/Builders/groundBuilder.pure.js";
+import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Client, Room } from "@colyseus/sdk";
-import type { MovementInput, PlayerState, RoomState } from "@coop/shared";
+import type {
+  CharacterSelection,
+  MovementInput,
+  PlayerCharacter,
+  PlayerCharacterState,
+  PlayerState,
+  RoomState,
+} from "@coop/shared";
 import "./style.css";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#renderCanvas")!;
@@ -23,6 +31,16 @@ const partnerText = document.querySelector<HTMLParagraphElement>("#partner")!;
 const statusText = document.querySelector<HTMLParagraphElement>("#status")!;
 const gameStatusText =
   document.querySelector<HTMLParagraphElement>("#game-status")!;
+const leverStatusText =
+  document.querySelector<HTMLParagraphElement>("#lever-status")!;
+const characterPanel =
+  document.querySelector<HTMLElement>("#character-panel")!;
+const characterStatusText =
+  document.querySelector<HTMLParagraphElement>("#character-status")!;
+const chooseWaterButton =
+  document.querySelector<HTMLButtonElement>("#choose-water")!;
+const chooseFireButton =
+  document.querySelector<HTMLButtonElement>("#choose-fire")!;
 
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
@@ -51,6 +69,16 @@ blueMaterial.emissiveColor = new Color3(0.03, 0.08, 0.14);
 const orangeMaterial = new StandardMaterial("orange-player", scene);
 orangeMaterial.diffuseColor = new Color3(1, 0.45, 0.2);
 orangeMaterial.emissiveColor = new Color3(0.14, 0.06, 0.03);
+
+const waterAuraMaterial = new StandardMaterial("water-aura", scene);
+waterAuraMaterial.diffuseColor = new Color3(0.25, 0.7, 1);
+waterAuraMaterial.emissiveColor = new Color3(0.05, 0.2, 0.35);
+waterAuraMaterial.alpha = 0.28;
+
+const fireAuraMaterial = new StandardMaterial("fire-aura", scene);
+fireAuraMaterial.diffuseColor = new Color3(1, 0.5, 0.12);
+fireAuraMaterial.emissiveColor = new Color3(0.35, 0.12, 0.02);
+fireAuraMaterial.alpha = 0.28;
 
 const plateInactiveMaterial = new StandardMaterial("plate-inactive", scene);
 plateInactiveMaterial.diffuseColor = new Color3(0.9, 0.68, 0.18);
@@ -154,7 +182,12 @@ const exitRight = CreateBox(
 exitRight.position.set(2, 0.1, 7);
 exitRight.material = exitBorderMaterial;
 
-const meshes = new Map<string, Mesh>();
+interface PlayerMeshes {
+  body: Mesh;
+  aura: Mesh;
+}
+
+const meshes = new Map<string, PlayerMeshes>();
 const targets = new Map<string, PlayerState>();
 const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567");
 const pressedKeys = new Set<string>();
@@ -164,48 +197,79 @@ const LEVER_PROMPT_DISTANCE = 1.5;
 
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
+let canPlay = false;
 
 function syncPlayers(players: Map<string, PlayerState>) {
-  const activePlayers = new Set<string>();
+  const visiblePlayers = new Set<string>();
   let partner: PlayerState | undefined;
 
   players.forEach((player, sessionId) => {
-    activePlayers.add(sessionId);
-    targets.set(sessionId, { x: player.x, z: player.z, color: player.color });
+    targets.set(sessionId, {
+      x: player.x,
+      z: player.z,
+      character: player.character,
+    });
     if (sessionId !== room?.sessionId) partner = player;
+    if (!canPlay || !isCharacter(player.character)) return;
 
+    visiblePlayers.add(sessionId);
     if (!meshes.has(sessionId)) {
-      const mesh = CreateBox(`player-${sessionId}`, { size: 1 }, scene);
-      mesh.position.set(player.x, 0.5, player.z);
-      mesh.material = player.color === "blue" ? blueMaterial : orangeMaterial;
-      meshes.set(sessionId, mesh);
+      const body = CreateSphere(
+        `player-${sessionId}`,
+        { diameter: 1, segments: 16 },
+        scene,
+      );
+      body.position.set(player.x, 0.5, player.z);
+      body.material = playerMaterial(player.character);
+
+      const aura = CreateSphere(
+        `player-aura-${sessionId}`,
+        { diameter: 1.35, segments: 12 },
+        scene,
+      );
+      aura.position.copyFrom(body.position);
+      aura.material = auraMaterial(player.character);
+
+      meshes.set(sessionId, { body, aura });
+    } else {
+      const mesh = meshes.get(sessionId)!;
+      mesh.body.material = playerMaterial(player.character);
+      mesh.aura.material = auraMaterial(player.character);
     }
   });
 
   const localPlayer = room ? players.get(room.sessionId) : undefined;
   if (localPlayer) {
-    identityText.hidden = false;
-    identityText.textContent = `You are ${capitalize(localPlayer.color)}`;
+    const localCharacter = localPlayer.character;
+    const localReady = isCharacter(localCharacter);
+    identityText.hidden = !localReady;
+    if (localReady) {
+      identityText.textContent = `You are ${characterName(localCharacter)}`;
+    }
+
+    const partnerCharacter = partner?.character;
     partnerText.hidden = false;
-    partnerText.textContent = partner
-      ? `Partner: ${capitalize(partner.color)}`
-      : "Partner: Waiting";
+    partnerText.textContent =
+      partnerCharacter && isCharacter(partnerCharacter)
+        ? `Partner: ${characterName(partnerCharacter)}`
+        : "Partner: Waiting";
   }
 
   statusText.textContent =
     players.size === 2 ? "Partner joined. 2/2" : "Waiting for partner... 1/2";
 
   meshes.forEach((mesh, sessionId) => {
-    if (activePlayers.has(sessionId)) return;
-    mesh.dispose();
+    if (visiblePlayers.has(sessionId)) return;
+    mesh.body.dispose();
+    mesh.aura.dispose();
     meshes.delete(sessionId);
     targets.delete(sessionId);
   });
 }
 
 function syncWorld(state: RoomState) {
+  syncCharacterSelection(state);
   syncPlayers(state.players);
-  syncInteractionPrompt(state);
   pressurePlate.material = state.plateActive
     ? plateActiveMaterial
     : plateInactiveMaterial;
@@ -221,16 +285,20 @@ function syncWorld(state: RoomState) {
     0.25 + Math.cos(leverAngle) * 0.6,
     5,
   );
-  gameStatusText.hidden = false;
+  leverStatusText.hidden = !canPlay;
+  leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
+  gameStatusText.hidden = !canPlay;
   gameStatusText.textContent = state.levelComplete
     ? "Level complete"
     : state.playersAtExit > 0
       ? "Waiting for partner at exit"
       : state.leverActive
-        ? "Lever activated"
+        ? "Lever on"
         : state.plateActive
           ? "Pressure plate active"
           : "Door closed";
+  syncInteractionPrompt(state);
+  if (canPlay) sendInput();
 }
 
 const interactionText =
@@ -243,7 +311,29 @@ function syncInteractionPrompt(state: RoomState) {
     Math.hypot(localPlayer.x - LEVER_X, localPlayer.z - LEVER_Z) <=
       LEVER_PROMPT_DISTANCE;
 
-  interactionText.hidden = state.leverActive || !nearLever;
+  interactionText.hidden = !canPlay || !nearLever;
+}
+
+function syncCharacterSelection(state: RoomState) {
+  const localPlayer = room ? state.players.get(room.sessionId) : undefined;
+  const players = Array.from(state.players.values());
+  const localReady = !!localPlayer && isCharacter(localPlayer.character);
+  const allReady =
+    state.players.size === 2 &&
+    players.every((player) => isCharacter(player.character));
+  const waterTaken = players.some((player) => player.character === "water");
+  const fireTaken = players.some((player) => player.character === "fire");
+
+  canPlay = allReady;
+  characterPanel.hidden = !room || allReady;
+  characterStatusText.textContent = localReady
+    ? "Waiting for partner to choose..."
+    : "Choose your character";
+
+  chooseWaterButton.disabled = localReady || waterTaken;
+  chooseWaterButton.textContent = waterTaken ? "Water taken" : "Choose Water";
+  chooseFireButton.disabled = localReady || fireTaken;
+  chooseFireButton.textContent = fireTaken ? "Fire taken" : "Choose Fire";
 }
 
 function updateCamera(blend: number) {
@@ -265,14 +355,38 @@ function updateCamera(blend: number) {
   camera.setTarget(cameraTarget);
 }
 
-function capitalize(value: string) {
-  return value[0].toUpperCase() + value.slice(1);
+function playerMaterial(character: PlayerCharacter) {
+  return character === "water" ? blueMaterial : orangeMaterial;
+}
+
+function auraMaterial(character: PlayerCharacter) {
+  return character === "water" ? waterAuraMaterial : fireAuraMaterial;
+}
+
+function characterName(character: PlayerCharacter) {
+  return character === "water" ? "Water" : "Fire";
+}
+
+function isCharacter(
+  character: PlayerCharacterState,
+): character is PlayerCharacter {
+  return character === "water" || character === "fire";
+}
+
+function setConnectControlsDisabled(disabled: boolean) {
+  createButton.disabled = disabled;
+  joinButton.disabled = disabled;
+  roomCodeInput.disabled = disabled;
+}
+
+function connectionErrorMessage(message: string) {
+  if (/locked|already full/i.test(message)) return "Room is full";
+
+  return message || "Could not connect.";
 }
 
 async function connect(action: () => Promise<Room<RoomState>>) {
-  createButton.disabled = true;
-  joinButton.disabled = true;
-  roomCodeInput.disabled = true;
+  setConnectControlsDisabled(true);
   statusText.textContent = "Connecting…";
 
   try {
@@ -283,20 +397,21 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     statusText.textContent = "Waiting for partner... 1/2";
 
     room.onStateChange(syncWorld);
+    room.onMessage("selectionError", (message: string) => {
+      statusText.textContent = message;
+    });
     room.onLeave(() => {
       room = null;
+      canPlay = false;
+      characterPanel.hidden = true;
       statusText.textContent = "Disconnected.";
     });
 
     sendInput();
   } catch (error) {
-    createButton.disabled = false;
-    joinButton.disabled = false;
-    roomCodeInput.disabled = false;
+    setConnectControlsDisabled(false);
     const message = error instanceof Error ? error.message : "";
-    statusText.textContent = /locked|already full/i.test(message)
-      ? "Room is full"
-      : message || "Could not connect.";
+    statusText.textContent = connectionErrorMessage(message);
   }
 }
 
@@ -313,7 +428,7 @@ function currentInput(): MovementInput {
 }
 
 function sendInput() {
-  if (!room) return;
+  if (!room || !canPlay) return;
 
   const input = currentInput();
   if (input.x === lastInput.x && input.z === lastInput.z) return;
@@ -337,13 +452,26 @@ joinForm.addEventListener("submit", (event) => {
   void connect(() => client.joinById<RoomState>(code));
 });
 
+function selectCharacter(character: PlayerCharacter) {
+  const selection: CharacterSelection = { character };
+  room?.send("selectCharacter", selection);
+}
+
+chooseWaterButton.addEventListener("click", () => {
+  selectCharacter("water");
+});
+
+chooseFireButton.addEventListener("click", () => {
+  selectCharacter("fire");
+});
+
 roomCodeInput.addEventListener("input", () => {
   roomCodeInput.value = roomCodeInput.value.toUpperCase().replace(/[^A-Z]/g, "");
 });
 
 window.addEventListener("keydown", (event) => {
   if (event.code === "KeyE") {
-    if (!event.repeat) room?.send("interact");
+    if (!event.repeat && canPlay) room?.send("interact");
     return;
   }
   if (!event.code.startsWith("Arrow") && !event.code.startsWith("Key")) return;
@@ -369,11 +497,12 @@ engine.runRenderLoop(() => {
   const blend = Math.min(1, deltaTime / 80);
   const cameraBlend = Math.min(1, deltaTime / 240);
 
-  meshes.forEach((mesh, sessionId) => {
+  meshes.forEach(({ body, aura }, sessionId) => {
     const target = targets.get(sessionId);
     if (!target) return;
-    mesh.position.x += (target.x - mesh.position.x) * blend;
-    mesh.position.z += (target.z - mesh.position.z) * blend;
+    body.position.x += (target.x - body.position.x) * blend;
+    body.position.z += (target.z - body.position.z) * blend;
+    aura.position.copyFrom(body.position);
   });
 
   updateCamera(cameraBlend);

@@ -3,12 +3,18 @@ export interface MovementInput {
   z: number;
 }
 
-export type PlayerColor = "blue" | "orange";
+export type PlayerCharacter = "water" | "fire";
+
+export type PlayerCharacterState = PlayerCharacter | "";
+
+export interface CharacterSelection {
+  character: PlayerCharacter;
+}
 
 export interface PlayerState {
   x: number;
   z: number;
-  color: PlayerColor;
+  character: PlayerCharacterState;
 }
 
 export interface RoomState {
