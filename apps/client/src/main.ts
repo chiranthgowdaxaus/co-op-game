@@ -10,8 +10,12 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Client, Room } from "@colyseus/sdk";
+import { TUTORIAL_LEVEL } from "@coop/shared";
 import type {
   CharacterSelection,
+  LevelBox,
+  LevelExit,
+  LevelLever,
   MovementInput,
   PlayerCharacter,
   PlayerCharacterState,
@@ -45,6 +49,7 @@ const chooseFireButton =
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
 scene.clearColor = new Color4(0.06, 0.09, 0.14, 1);
+const LEVEL = TUTORIAL_LEVEL;
 
 const LEVEL_FOCUS = new Vector3(-1.2, 0, 3.5);
 const CAMERA_OFFSET = new Vector3(0, 12.5, -13.5);
@@ -57,7 +62,12 @@ camera.inputs.clear();
 const light = new HemisphericLight("light", new Vector3(0, 1, 0), scene);
 light.intensity = 1;
 
-const ground = CreateGround("ground", { width: 20, height: 20 }, scene);
+const ground = CreateGround(
+  "ground",
+  { width: LEVEL.floor.width, height: LEVEL.floor.depth },
+  scene,
+);
+ground.position.set(LEVEL.floor.x, 0, LEVEL.floor.z);
 const groundMaterial = new StandardMaterial("ground-material", scene);
 groundMaterial.diffuseColor = new Color3(0.2, 0.26, 0.34);
 ground.material = groundMaterial;
@@ -107,80 +117,100 @@ exitMaterial.diffuseColor = new Color3(0.1, 0.75, 0.65);
 const exitBorderMaterial = new StandardMaterial("exit-border", scene);
 exitBorderMaterial.diffuseColor = new Color3(0.35, 1, 0.85);
 
-const pressurePlate = CreateBox(
-  "pressure-plate",
-  { width: 1.8, height: 0.15, depth: 1.8 },
-  scene,
+const pressurePlateMeshes = LEVEL.pressurePlates.map((plate) =>
+  createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
 );
-pressurePlate.position.y = 0.075;
-pressurePlate.material = plateInactiveMaterial;
 
-const door = CreateBox("door", { width: 6, height: 3, depth: 0.5 }, scene);
-door.position.set(0, 1.5, 3);
-door.material = doorClosedMaterial;
+const doorMeshes = LEVEL.doors.map((doorDefinition) => ({
+  definition: doorDefinition,
+  mesh: createLevelBox(
+    `door-${doorDefinition.id}`,
+    doorDefinition,
+    doorClosedMaterial,
+    doorDefinition.closedY,
+  ),
+}));
 
-const leftWall = CreateBox(
-  "left-wall",
-  { width: 6, height: 3, depth: 0.5 },
-  scene,
+LEVEL.walls.forEach((wall) =>
+  createLevelBox(`wall-${wall.id}`, wall, wallMaterial),
 );
-leftWall.position.set(-6, 1.5, 3);
-leftWall.material = wallMaterial;
 
-const rightWall = CreateBox(
-  "right-wall",
-  { width: 6, height: 3, depth: 0.5 },
-  scene,
-);
-rightWall.position.set(6, 1.5, 3);
-rightWall.material = wallMaterial;
+const leverMeshes = LEVEL.levers.map((lever) => createLeverMeshes(lever));
 
-const leverBase = CreateBox(
-  "lever-base",
-  { width: 0.7, height: 0.25, depth: 0.7 },
-  scene,
-);
-leverBase.position.set(3, 0.125, 5);
-leverBase.material = leverBaseMaterial;
+LEVEL.exits.forEach((exit) => {
+  createLevelBox(`exit-${exit.id}`, exit, exitMaterial);
+  createExitBorder(exit);
+});
 
-const leverStick = CreateBox(
-  "lever-stick",
-  { width: 0.15, height: 1.2, depth: 0.15 },
-  scene,
-);
-leverStick.material = leverInactiveMaterial;
+function createLevelBox(
+  name: string,
+  box: LevelBox,
+  material: StandardMaterial,
+  y = box.height / 2,
+) {
+  const mesh = CreateBox(
+    name,
+    { width: box.width, height: box.height, depth: box.depth },
+    scene,
+  );
+  mesh.position.set(box.x, y, box.z);
+  mesh.material = material;
+  return mesh;
+}
 
-const exitZone = CreateBox(
-  "exit-zone",
-  { width: 4, height: 0.08, depth: 3 },
-  scene,
-);
-exitZone.position.set(0, 0.04, 7);
-exitZone.material = exitMaterial;
+function createLeverMeshes(definition: LevelLever) {
+  const base = CreateBox(
+    `lever-base-${definition.id}`,
+    {
+      width: definition.base.width,
+      height: definition.base.height,
+      depth: definition.base.depth,
+    },
+    scene,
+  );
+  base.position.set(definition.x, definition.base.height / 2, definition.z);
+  base.material = leverBaseMaterial;
 
-const exitBack = CreateBox("exit-back", { width: 4, height: 0.12, depth: 0.12 }, scene);
-exitBack.position.set(0, 0.1, 8.5);
-exitBack.material = exitBorderMaterial;
+  const stick = CreateBox(
+    `lever-stick-${definition.id}`,
+    {
+      width: definition.stick.width,
+      height: definition.stick.height,
+      depth: definition.stick.depth,
+    },
+    scene,
+  );
+  stick.material = leverInactiveMaterial;
 
-const exitFront = CreateBox(
-  "exit-front",
-  { width: 4, height: 0.12, depth: 0.12 },
-  scene,
-);
-exitFront.position.set(0, 0.1, 5.5);
-exitFront.material = exitBorderMaterial;
+  return { definition, stick };
+}
 
-const exitLeft = CreateBox("exit-left", { width: 0.12, height: 0.12, depth: 3 }, scene);
-exitLeft.position.set(-2, 0.1, 7);
-exitLeft.material = exitBorderMaterial;
-
-const exitRight = CreateBox(
-  "exit-right",
-  { width: 0.12, height: 0.12, depth: 3 },
-  scene,
-);
-exitRight.position.set(2, 0.1, 7);
-exitRight.material = exitBorderMaterial;
+function createExitBorder(exit: LevelExit) {
+  createLevelBox(
+    `exit-back-${exit.id}`,
+    { ...exit, height: exit.borderHeight, depth: exit.borderHeight },
+    exitBorderMaterial,
+    exit.borderHeight / 2,
+  ).position.z = exit.z + exit.depth / 2;
+  createLevelBox(
+    `exit-front-${exit.id}`,
+    { ...exit, height: exit.borderHeight, depth: exit.borderHeight },
+    exitBorderMaterial,
+    exit.borderHeight / 2,
+  ).position.z = exit.z - exit.depth / 2;
+  createLevelBox(
+    `exit-left-${exit.id}`,
+    { ...exit, width: exit.borderHeight, height: exit.borderHeight },
+    exitBorderMaterial,
+    exit.borderHeight / 2,
+  ).position.x = exit.x - exit.width / 2;
+  createLevelBox(
+    `exit-right-${exit.id}`,
+    { ...exit, width: exit.borderHeight, height: exit.borderHeight },
+    exitBorderMaterial,
+    exit.borderHeight / 2,
+  ).position.x = exit.x + exit.width / 2;
+}
 
 interface PlayerMeshes {
   body: Mesh;
@@ -191,9 +221,6 @@ const meshes = new Map<string, PlayerMeshes>();
 const targets = new Map<string, PlayerState>();
 const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567");
 const pressedKeys = new Set<string>();
-const LEVER_X = 3;
-const LEVER_Z = 5;
-const LEVER_PROMPT_DISTANCE = 1.5;
 
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
@@ -270,21 +297,27 @@ function syncPlayers(players: Map<string, PlayerState>) {
 function syncWorld(state: RoomState) {
   syncCharacterSelection(state);
   syncPlayers(state.players);
-  pressurePlate.material = state.plateActive
-    ? plateActiveMaterial
-    : plateInactiveMaterial;
-  door.position.y = state.doorOpen ? 4.5 : 1.5;
-  door.material = state.doorOpen ? doorOpenMaterial : doorClosedMaterial;
+  pressurePlateMeshes.forEach((plate) => {
+    plate.material = state.plateActive
+      ? plateActiveMaterial
+      : plateInactiveMaterial;
+  });
+  doorMeshes.forEach(({ definition, mesh }) => {
+    mesh.position.y = state.doorOpen ? definition.openY : definition.closedY;
+    mesh.material = state.doorOpen ? doorOpenMaterial : doorClosedMaterial;
+  });
   const leverAngle = state.leverActive ? 0.6 : -0.6;
-  leverStick.rotation.z = leverAngle;
-  leverStick.material = state.leverActive
-    ? plateActiveMaterial
-    : leverInactiveMaterial;
-  leverStick.position.set(
-    3 - Math.sin(leverAngle) * 0.6,
-    0.25 + Math.cos(leverAngle) * 0.6,
-    5,
-  );
+  leverMeshes.forEach(({ definition, stick }) => {
+    stick.rotation.z = leverAngle;
+    stick.material = state.leverActive
+      ? plateActiveMaterial
+      : leverInactiveMaterial;
+    stick.position.set(
+      definition.x - Math.sin(leverAngle) * (definition.stick.height / 2),
+      definition.base.height + Math.cos(leverAngle) * (definition.stick.height / 2),
+      definition.z,
+    );
+  });
   leverStatusText.hidden = !canPlay;
   leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
   gameStatusText.hidden = !canPlay;
@@ -308,8 +341,11 @@ function syncInteractionPrompt(state: RoomState) {
   const localPlayer = room ? state.players.get(room.sessionId) : undefined;
   const nearLever =
     localPlayer &&
-    Math.hypot(localPlayer.x - LEVER_X, localPlayer.z - LEVER_Z) <=
-      LEVER_PROMPT_DISTANCE;
+    LEVEL.levers.some(
+      (lever) =>
+        Math.hypot(localPlayer.x - lever.x, localPlayer.z - lever.z) <=
+        lever.interactDistance,
+    );
 
   interactionText.hidden = !canPlay || !nearLever;
 }

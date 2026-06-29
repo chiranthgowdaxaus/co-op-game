@@ -2,29 +2,21 @@ import { MapSchema, Schema, type } from "@colyseus/schema";
 import { Client, Room } from "colyseus";
 import type {
   CharacterSelection,
+  LevelBox,
+  LevelRect,
   MovementInput,
   PlayerCharacter,
   PlayerCharacterState,
 } from "@coop/shared";
+import { TUTORIAL_LEVEL } from "@coop/shared";
 
 const ROOM_CODES = "$room_codes";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TICK_MS = 50;
 const MOVE_SPEED = 4;
-const WORLD_LIMIT = 9;
-const PLATE_HALF_SIZE = 0.9;
-const DOOR_Z = 3;
-const DOOR_HALF_WIDTH = 3;
-const DOOR_HALF_DEPTH = 0.25;
-const PLAYER_HALF_SIZE = 0.5;
-const PLAYER_COLLISION_DISTANCE = PLAYER_HALF_SIZE * 2;
+const LEVEL = TUTORIAL_LEVEL;
+const PLAYER_COLLISION_DISTANCE = LEVEL.playerRadius * 2;
 const COLLISION_MARGIN = 0.01;
-const LEVER_X = 3;
-const LEVER_Z = 5;
-const LEVER_INTERACT_DISTANCE = 1.5;
-const EXIT_HALF_WIDTH = 2;
-const EXIT_CENTER_Z = 7;
-const EXIT_HALF_DEPTH = 1.5;
 
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
@@ -77,8 +69,11 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       const player = this.state.players.get(client.sessionId);
       if (
         player &&
-        Math.hypot(player.x - LEVER_X, player.z - LEVER_Z) <=
-          LEVER_INTERACT_DISTANCE
+        LEVEL.levers.some(
+          (lever) =>
+            Math.hypot(player.x - lever.x, player.z - lever.z) <=
+            lever.interactDistance,
+        )
       ) {
         const wasDoorOpen = this.state.doorOpen;
         this.state.leverActive = !this.state.leverActive;
@@ -94,7 +89,9 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   onJoin(client: Client) {
     const player = new PlayerSchema();
-    player.x = this.state.players.size === 0 ? -2 : 2;
+    const spawn = LEVEL.playerSpawns[this.state.players.size] ?? LEVEL.playerSpawns[0];
+    player.x = spawn.x;
+    player.z = spawn.z;
     this.state.players.set(client.sessionId, player);
     this.inputs.set(client.sessionId, { x: 0, z: 0 });
   }
@@ -117,14 +114,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       const player = this.state.players.get(sessionId);
       if (!player) return;
 
-      const nextX = Math.max(
-        -WORLD_LIMIT,
-        Math.min(WORLD_LIMIT, player.x + input.x * distance),
-      );
-      const nextZ = Math.max(
-        -WORLD_LIMIT,
-        Math.min(WORLD_LIMIT, player.z + input.z * distance),
-      );
+      const nextX = this.clampToBounds(player.x + input.x * distance, "x");
+      const nextZ = this.clampToBounds(player.z + input.z * distance, "z");
 
       if (
         !this.hitsBarrier(nextX, player.z) &&
@@ -143,8 +134,9 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     const wasDoorOpen = this.state.doorOpen;
     this.state.plateActive = Array.from(this.state.players.values()).some(
       (player) =>
-        Math.abs(player.x) <= PLATE_HALF_SIZE &&
-        Math.abs(player.z) <= PLATE_HALF_SIZE,
+        LEVEL.pressurePlates.some((plate) =>
+          this.pointInRect(player.x, player.z, plate),
+        ),
     );
     this.updateDoorOpen();
     if (wasDoorOpen && !this.state.doorOpen) {
@@ -152,8 +144,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     }
     this.state.playersAtExit = Array.from(this.state.players.values()).filter(
       (player) =>
-        Math.abs(player.x) <= EXIT_HALF_WIDTH &&
-        Math.abs(player.z - EXIT_CENTER_Z) <= EXIT_HALF_DEPTH,
+        LEVEL.exits.some((exit) => this.pointInRect(player.x, player.z, exit)),
     ).length;
     if (this.state.players.size === 2 && this.state.playersAtExit === 2) {
       this.state.levelComplete = true;
@@ -161,16 +152,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private hitsBarrier(x: number, z: number) {
-    if (Math.abs(z - DOOR_Z) > DOOR_HALF_DEPTH + PLAYER_HALF_SIZE) {
-      return false;
-    }
-
-    const hitsSideWall = Math.abs(x) >= DOOR_HALF_WIDTH - PLAYER_HALF_SIZE;
+    const hitsWall = LEVEL.walls.some((wall) =>
+      this.circleIntersectsBox(x, z, wall),
+    );
     const hitsDoor =
       !this.state.doorOpen &&
-      Math.abs(x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE;
+      LEVEL.doors.some((door) => this.circleIntersectsBox(x, z, door));
 
-    return hitsSideWall || hitsDoor;
+    return hitsWall || hitsDoor;
   }
 
   private hitsPlayer(sessionId: string, x: number, z: number) {
@@ -190,6 +179,29 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.doorOpen = this.state.plateActive || this.state.leverActive;
   }
 
+  private clampToBounds(value: number, axis: "x" | "z") {
+    const bounds = LEVEL.playerBounds;
+    const size = axis === "x" ? bounds.width : bounds.depth;
+    const center = bounds[axis];
+    const halfSize = size / 2;
+
+    return Math.max(center - halfSize, Math.min(center + halfSize, value));
+  }
+
+  private pointInRect(x: number, z: number, rect: LevelRect) {
+    return (
+      Math.abs(x - rect.x) <= rect.width / 2 &&
+      Math.abs(z - rect.z) <= rect.depth / 2
+    );
+  }
+
+  private circleIntersectsBox(x: number, z: number, box: LevelBox) {
+    return (
+      Math.abs(x - box.x) <= box.width / 2 + LEVEL.playerRadius &&
+      Math.abs(z - box.z) <= box.depth / 2 + LEVEL.playerRadius
+    );
+  }
+
   private gameReady() {
     return (
       this.state.players.size === 2 &&
@@ -200,19 +212,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private pushPlayersOutOfDoor() {
-    const safeOffset =
-      DOOR_HALF_DEPTH + PLAYER_HALF_SIZE + COLLISION_MARGIN;
-
     this.state.players.forEach((player) => {
-      const overlapsDoor =
-        Math.abs(player.x) <= DOOR_HALF_WIDTH + PLAYER_HALF_SIZE &&
-        Math.abs(player.z - DOOR_Z) <=
-          DOOR_HALF_DEPTH + PLAYER_HALF_SIZE;
+      LEVEL.doors.forEach((door) => {
+        if (!this.circleIntersectsBox(player.x, player.z, door)) return;
 
-      if (overlapsDoor) {
-        player.z =
-          player.z <= DOOR_Z ? DOOR_Z - safeOffset : DOOR_Z + safeOffset;
-      }
+        const safeOffset =
+          door.depth / 2 + LEVEL.playerRadius + COLLISION_MARGIN;
+        player.z = player.z <= door.z ? door.z - safeOffset : door.z + safeOffset;
+      });
     });
   }
 
