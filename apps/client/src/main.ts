@@ -15,6 +15,7 @@ import type {
   CharacterSelection,
   LevelBox,
   LevelExit,
+  LevelHazard,
   LevelLever,
   MovementInput,
   PlayerCharacter,
@@ -37,6 +38,8 @@ const gameStatusText =
   document.querySelector<HTMLParagraphElement>("#game-status")!;
 const leverStatusText =
   document.querySelector<HTMLParagraphElement>("#lever-status")!;
+const hazardStatusText =
+  document.querySelector<HTMLParagraphElement>("#hazard-status")!;
 const characterPanel =
   document.querySelector<HTMLElement>("#character-panel")!;
 const characterStatusText =
@@ -117,6 +120,24 @@ exitMaterial.diffuseColor = new Color3(0.1, 0.75, 0.65);
 const exitBorderMaterial = new StandardMaterial("exit-border", scene);
 exitBorderMaterial.diffuseColor = new Color3(0.35, 1, 0.85);
 
+const waterHazardMaterial = new StandardMaterial("water-hazard", scene);
+waterHazardMaterial.diffuseColor = new Color3(0.05, 0.45, 1);
+waterHazardMaterial.emissiveColor = new Color3(0.02, 0.12, 0.25);
+waterHazardMaterial.alpha = 0.75;
+
+const lavaHazardMaterial = new StandardMaterial("lava-hazard", scene);
+lavaHazardMaterial.diffuseColor = new Color3(1, 0.18, 0.04);
+lavaHazardMaterial.emissiveColor = new Color3(0.35, 0.08, 0.01);
+lavaHazardMaterial.alpha = 0.8;
+
+const poisonHazardMaterial = new StandardMaterial("poison-hazard", scene);
+poisonHazardMaterial.diffuseColor = new Color3(0.35, 0.9, 0.15);
+poisonHazardMaterial.emissiveColor = new Color3(0.12, 0.18, 0.08);
+poisonHazardMaterial.alpha = 0.75;
+
+const hazardBorderMaterial = new StandardMaterial("hazard-border", scene);
+hazardBorderMaterial.diffuseColor = new Color3(0.12, 0.1, 0.16);
+
 const pressurePlateMeshes = LEVEL.pressurePlates.map((plate) =>
   createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
 );
@@ -142,6 +163,8 @@ LEVEL.exits.forEach((exit) => {
   createExitBorder(exit);
 });
 
+LEVEL.hazards.forEach((hazard) => createHazardMesh(hazard));
+
 function createLevelBox(
   name: string,
   box: LevelBox,
@@ -156,6 +179,35 @@ function createLevelBox(
   mesh.position.set(box.x, y, box.z);
   mesh.material = material;
   return mesh;
+}
+
+function createHazardMesh(hazard: LevelHazard) {
+  const pool = CreateBox(
+    `hazard-${hazard.id}`,
+    { width: hazard.size.width, height: 0.06, depth: hazard.size.depth },
+    scene,
+  );
+  pool.position.set(hazard.position.x, 0.035, hazard.position.z);
+  pool.material = hazardMaterial(hazard);
+
+  const border = CreateBox(
+    `hazard-border-${hazard.id}`,
+    {
+      width: hazard.size.width + 0.15,
+      height: 0.04,
+      depth: hazard.size.depth + 0.15,
+    },
+    scene,
+  );
+  border.position.set(hazard.position.x, 0.02, hazard.position.z);
+  border.material = hazardBorderMaterial;
+}
+
+function hazardMaterial(hazard: LevelHazard) {
+  if (hazard.type === "water") return waterHazardMaterial;
+  if (hazard.type === "lava") return lavaHazardMaterial;
+
+  return poisonHazardMaterial;
 }
 
 function createLeverMeshes(definition: LevelLever) {
@@ -225,6 +277,7 @@ const pressedKeys = new Set<string>();
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
 let canPlay = false;
+let hazardStatusTimeout: number | undefined;
 
 function syncPlayers(players: Map<string, PlayerState>) {
   const visiblePlayers = new Set<string>();
@@ -421,6 +474,15 @@ function connectionErrorMessage(message: string) {
   return message || "Could not connect.";
 }
 
+function showHazardStatus(message: string) {
+  hazardStatusText.hidden = false;
+  hazardStatusText.textContent = message;
+  if (hazardStatusTimeout) window.clearTimeout(hazardStatusTimeout);
+  hazardStatusTimeout = window.setTimeout(() => {
+    hazardStatusText.hidden = true;
+  }, 2200);
+}
+
 async function connect(action: () => Promise<Room<RoomState>>) {
   setConnectControlsDisabled(true);
   statusText.textContent = "Connecting…";
@@ -436,10 +498,12 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     room.onMessage("selectionError", (message: string) => {
       statusText.textContent = message;
     });
+    room.onMessage("hazardStatus", showHazardStatus);
     room.onLeave(() => {
       room = null;
       canPlay = false;
       characterPanel.hidden = true;
+      hazardStatusText.hidden = true;
       statusText.textContent = "Disconnected.";
     });
 

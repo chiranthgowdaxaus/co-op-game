@@ -94,6 +94,7 @@ input {
 #status,
 .objective,
 #lever-status,
+#hazard-status,
 #interaction,
 .controls {
   margin-bottom: 0;
@@ -102,9 +103,14 @@ input {
 
 .objective,
 #lever-status,
+#hazard-status,
 #interaction,
 .controls {
   font-size: 0.875rem;
+}
+
+#hazard-status {
+  color: #fca5a5;
 }
 
 #interaction {

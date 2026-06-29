@@ -3,6 +3,7 @@ import { Client, Room } from "colyseus";
 import type {
   CharacterSelection,
   LevelBox,
+  LevelHazard,
   LevelRect,
   MovementInput,
   PlayerCharacter,
@@ -21,6 +22,7 @@ const COLLISION_MARGIN = 0.01;
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
   @type("float32") z = 0;
+  @type("uint8") spawnIndex = 0;
   @type("string") character: PlayerCharacterState = "";
 }
 
@@ -89,7 +91,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   onJoin(client: Client) {
     const player = new PlayerSchema();
-    const spawn = LEVEL.playerSpawns[this.state.players.size] ?? LEVEL.playerSpawns[0];
+    player.spawnIndex = this.state.players.size;
+    const spawn = this.spawnFor(player);
     player.x = spawn.x;
     player.z = spawn.z;
     this.state.players.set(client.sessionId, player);
@@ -130,6 +133,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
         player.z = nextZ;
       }
     });
+
+    this.checkHazards();
 
     const wasDoorOpen = this.state.doorOpen;
     this.state.plateActive = Array.from(this.state.players.values()).some(
@@ -193,6 +198,54 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       Math.abs(x - rect.x) <= rect.width / 2 &&
       Math.abs(z - rect.z) <= rect.depth / 2
     );
+  }
+
+  private playerOverlapsHazard(player: PlayerSchema, hazard: LevelHazard) {
+    return (
+      Math.abs(player.x - hazard.position.x) <=
+        hazard.size.width / 2 + LEVEL.playerRadius &&
+      Math.abs(player.z - hazard.position.z) <=
+        hazard.size.depth / 2 + LEVEL.playerRadius
+    );
+  }
+
+  private checkHazards() {
+    this.state.players.forEach((player) => {
+      if (!this.hasCharacter(player.character)) return;
+
+      const hazard = LEVEL.hazards.find((candidate) =>
+        this.playerOverlapsHazard(player, candidate),
+      );
+      if (!hazard || this.isSafeHazard(player.character, hazard)) return;
+
+      this.respawnPlayer(player);
+      this.broadcast("hazardStatus", this.hazardMessage(player.character, hazard));
+    });
+  }
+
+  private isSafeHazard(character: PlayerCharacter, hazard: LevelHazard) {
+    return (
+      (character === "water" && hazard.type === "water") ||
+      (character === "fire" && hazard.type === "lava")
+    );
+  }
+
+  private hazardMessage(character: PlayerCharacter, hazard: LevelHazard) {
+    if (hazard.type === "poison") return "Player touched poison and respawned";
+
+    return `${this.characterName(character)} touched ${
+      hazard.type === "lava" ? "lava" : "water"
+    } and respawned`;
+  }
+
+  private respawnPlayer(player: PlayerSchema) {
+    const spawn = this.spawnFor(player);
+    player.x = spawn.x;
+    player.z = spawn.z;
+  }
+
+  private spawnFor(player: PlayerSchema) {
+    return LEVEL.playerSpawns[player.spawnIndex] ?? LEVEL.playerSpawns[0];
   }
 
   private circleIntersectsBox(x: number, z: number, box: LevelBox) {
