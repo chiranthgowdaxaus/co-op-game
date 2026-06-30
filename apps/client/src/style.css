@@ -91,6 +91,12 @@ input {
   font-weight: 700;
 }
 
+#level-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
 #status,
 .objective,
 #lever-status,
