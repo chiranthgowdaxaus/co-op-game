@@ -114,6 +114,9 @@ doorOpenMaterial.diffuseColor = new Color3(0.25, 0.65, 0.3);
 const wallMaterial = new StandardMaterial("wall", scene);
 wallMaterial.diffuseColor = new Color3(0.3, 0.34, 0.42);
 
+const platformMaterial = new StandardMaterial("platform", scene);
+platformMaterial.diffuseColor = new Color3(0.36, 0.42, 0.52);
+
 const leverBaseMaterial = new StandardMaterial("lever-base", scene);
 leverBaseMaterial.diffuseColor = new Color3(0.16, 0.18, 0.22);
 
@@ -207,6 +210,9 @@ function buildLevel(levelData: LevelDefinition) {
 
   level.walls.forEach((wall) =>
     createLevelBox(`wall-${wall.id}`, wall, wallMaterial),
+  );
+  level.platforms.forEach((platform) =>
+    createLevelBox(`platform-${platform.id}`, platform, platformMaterial),
   );
 
   leverMeshes = level.levers.map((lever) => createLeverMeshes(lever));
@@ -404,8 +410,9 @@ const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2
 const pressedKeys = new Set<string>();
 
 let room: Room<RoomState> | null = null;
-let lastInput: MovementInput = { x: 0, z: 0 };
+let lastInput: MovementInput = { x: 0, z: 0, jump: false };
 let canPlay = false;
+let jumpQueued = false;
 let gemStatusTimeout: number | undefined;
 let hazardStatusTimeout: number | undefined;
 
@@ -416,7 +423,10 @@ function syncPlayers(players: Map<string, PlayerState>) {
   players.forEach((player, sessionId) => {
     targets.set(sessionId, {
       x: player.x,
+      y: player.y,
       z: player.z,
+      velocityY: player.velocityY,
+      grounded: player.grounded,
       character: player.character,
     });
     if (sessionId !== room?.sessionId) partner = player;
@@ -429,7 +439,7 @@ function syncPlayers(players: Map<string, PlayerState>) {
         { diameter: 1, segments: 16 },
         scene,
       );
-      body.position.set(player.x, 0.5, player.z);
+      body.position.set(player.x, player.y + level.playerRadius, player.z);
       body.material = playerMaterial(player.character);
 
       const aura = CreateSphere(
@@ -694,17 +704,22 @@ function currentInput(): MovementInput {
     Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
   const length = Math.hypot(x, z);
 
-  return length > 1 ? { x: x / length, z: z / length } : { x, z };
+  return length > 1
+    ? { x: x / length, z: z / length, jump: jumpQueued }
+    : { x, z, jump: jumpQueued };
 }
 
 function sendInput() {
   if (!room || !canPlay) return;
 
   const input = currentInput();
-  if (input.x === lastInput.x && input.z === lastInput.z) return;
+  if (input.x === lastInput.x && input.z === lastInput.z && !input.jump) {
+    return;
+  }
 
-  lastInput = input;
   room.send("input", input);
+  lastInput = { x: input.x, z: input.z, jump: false };
+  jumpQueued = false;
 }
 
 createButton.addEventListener("click", () => {
@@ -748,6 +763,14 @@ roomCodeInput.addEventListener("input", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (!event.repeat && canPlay) {
+      jumpQueued = true;
+      sendInput();
+    }
+    return;
+  }
   if (event.code === "KeyE") {
     if (!event.repeat && canPlay) room?.send("interact");
     return;
@@ -765,6 +788,7 @@ window.addEventListener("keyup", (event) => {
 
 window.addEventListener("blur", () => {
   pressedKeys.clear();
+  jumpQueued = false;
   sendInput();
 });
 
@@ -779,6 +803,7 @@ engine.runRenderLoop(() => {
     const target = targets.get(sessionId);
     if (!target) return;
     body.position.x += (target.x - body.position.x) * blend;
+    body.position.y += (target.y + level.playerRadius - body.position.y) * blend;
     body.position.z += (target.z - body.position.z) * blend;
     aura.position.copyFrom(body.position);
   });

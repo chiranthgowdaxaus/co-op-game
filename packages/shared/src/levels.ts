@@ -29,6 +29,10 @@ export interface LevelPressurePlate extends LevelBox {
   id: string;
 }
 
+export interface LevelPlatform extends LevelBox {
+  id: string;
+}
+
 export interface LevelLever {
   id: string;
   position: LevelVector3;
@@ -73,6 +77,7 @@ export interface LevelDefinition {
   walls: LevelWall[];
   doors: LevelDoor[];
   pressurePlates: LevelPressurePlate[];
+  platforms: LevelPlatform[];
   levers: LevelLever[];
   exits: LevelExit[];
   hazards: LevelHazard[];
@@ -123,6 +128,7 @@ export const LEVEL_1: LevelDefinition = {
       size: { x: 1.8, y: 0.15, z: 1.8 },
     },
   ],
+  platforms: [],
   levers: [
     {
       id: "main-lever",
@@ -186,6 +192,13 @@ export const LEVEL_2: LevelDefinition = {
   ...LEVEL_1,
   id: "level-2",
   name: "Level 2 Placeholder",
+  platforms: [
+    {
+      id: "jump-platform",
+      position: { x: 0, y: 0.4, z: -6 },
+      size: { x: 3, y: 0.8, z: 3 },
+    },
+  ],
 };
 
 export const LEVELS: LevelDefinition[] = [LEVEL_1, LEVEL_2];
