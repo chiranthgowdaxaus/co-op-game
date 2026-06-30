@@ -5,19 +5,16 @@ import type {
   LevelBox,
   LevelGem,
   LevelHazard,
-  LevelRect,
   MovementInput,
   PlayerCharacter,
   PlayerCharacterState,
 } from "@coop/shared";
-import { TUTORIAL_LEVEL } from "@coop/shared";
+import { FIRST_LEVEL_ID, getLevelDefinition, getNextLevelId } from "@coop/shared";
 
 const ROOM_CODES = "$room_codes";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TICK_MS = 50;
 const MOVE_SPEED = 4;
-const LEVEL = TUTORIAL_LEVEL;
-const PLAYER_COLLISION_DISTANCE = LEVEL.playerRadius * 2;
 const COLLISION_MARGIN = 0.01;
 
 class PlayerSchema extends Schema {
@@ -28,14 +25,17 @@ class PlayerSchema extends Schema {
 }
 
 class GameStateSchema extends Schema {
+  @type("string") currentLevelId = FIRST_LEVEL_ID;
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
   @type({ map: "boolean" }) collectedGems = new MapSchema<boolean>();
+  @type({ map: "boolean" }) hazardStates = new MapSchema<boolean>();
   @type("boolean") plateActive = false;
   @type("boolean") leverActive = false;
   @type("boolean") doorOpen = false;
   @type("uint8") playersAtExit = 0;
   @type("boolean") exitBlocked = false;
   @type("boolean") levelComplete = false;
+  @type("boolean") allLevelsComplete = false;
 }
 
 export class GameRoom extends Room<{ state: GameStateSchema }> {
@@ -43,10 +43,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   private readonly inputs = new Map<string, MovementInput>();
 
+  private get level() {
+    return getLevelDefinition(this.state.currentLevelId);
+  }
+
   async onCreate() {
     this.roomId = await this.generateRoomCode();
     this.setState(new GameStateSchema());
-    LEVEL.gems.forEach((gem) => this.state.collectedGems.set(gem.id, false));
+    this.resetLevel(FIRST_LEVEL_ID);
 
     this.onMessage("input", (client, message: unknown) => {
       this.inputs.set(client.sessionId, this.sanitizeInput(message));
@@ -75,9 +79,12 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       const player = this.state.players.get(client.sessionId);
       if (
         player &&
-        LEVEL.levers.some(
+        this.level.levers.some(
           (lever) =>
-            Math.hypot(player.x - lever.x, player.z - lever.z) <=
+            Math.hypot(
+              player.x - lever.position.x,
+              player.z - lever.position.z,
+            ) <=
             lever.interactDistance,
         )
       ) {
@@ -88,6 +95,22 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
           this.pushPlayersOutOfDoor();
         }
       }
+    });
+
+    this.onMessage("restart", () => {
+      this.resetLevel();
+    });
+
+    this.onMessage("nextLevel", () => {
+      if (!this.state.levelComplete) return;
+
+      const nextLevelId = getNextLevelId(this.state.currentLevelId);
+      if (!nextLevelId) {
+        this.state.allLevelsComplete = true;
+        return;
+      }
+
+      this.resetLevel(nextLevelId);
     });
 
     this.setSimulationInterval((deltaTime) => this.updatePlayers(deltaTime), TICK_MS);
@@ -110,6 +133,30 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   async onDispose() {
     await this.presence.srem(ROOM_CODES, this.roomId);
+  }
+
+  private resetLevel(levelId = this.state.currentLevelId) {
+    this.state.currentLevelId = levelId;
+    this.state.collectedGems.clear();
+    this.state.hazardStates.clear();
+    this.level.gems.forEach((gem) => this.state.collectedGems.set(gem.id, false));
+    this.level.hazards.forEach((hazard) =>
+      this.state.hazardStates.set(hazard.id, true),
+    );
+    this.state.plateActive = false;
+    this.state.leverActive = false;
+    this.state.doorOpen = false;
+    this.state.playersAtExit = 0;
+    this.state.exitBlocked = false;
+    this.state.levelComplete = false;
+    this.state.allLevelsComplete = false;
+
+    this.state.players.forEach((player, sessionId) => {
+      const spawn = this.spawnFor(player);
+      player.x = spawn.x;
+      player.z = spawn.z;
+      this.inputs.set(sessionId, { x: 0, z: 0 });
+    });
   }
 
   private updatePlayers(deltaTime: number) {
@@ -144,7 +191,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     const wasDoorOpen = this.state.doorOpen;
     this.state.plateActive = Array.from(this.state.players.values()).some(
       (player) =>
-        LEVEL.pressurePlates.some((plate) =>
+        this.level.pressurePlates.some((plate) =>
           this.pointInRect(player.x, player.z, plate),
         ),
     );
@@ -154,7 +201,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     }
     this.state.playersAtExit = Array.from(this.state.players.values()).filter(
       (player) =>
-        LEVEL.exits.some((exit) => this.pointInRect(player.x, player.z, exit)),
+        this.level.exits.some((exit) => this.pointInRect(player.x, player.z, exit)),
     ).length;
     const allRequiredGemsCollected = this.requiredGemsCollected();
     this.state.exitBlocked =
@@ -171,12 +218,12 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private hitsBarrier(x: number, z: number) {
-    const hitsWall = LEVEL.walls.some((wall) =>
+    const hitsWall = this.level.walls.some((wall) =>
       this.circleIntersectsBox(x, z, wall),
     );
     const hitsDoor =
       !this.state.doorOpen &&
-      LEVEL.doors.some((door) => this.circleIntersectsBox(x, z, door));
+      this.level.doors.some((door) => this.circleIntersectsBox(x, z, door));
 
     return hitsWall || hitsDoor;
   }
@@ -186,7 +233,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
     this.state.players.forEach((other, otherId) => {
       if (otherId === sessionId) return;
-      if (Math.hypot(other.x - x, other.z - z) < PLAYER_COLLISION_DISTANCE) {
+      if (Math.hypot(other.x - x, other.z - z) < this.level.playerRadius * 2) {
         hit = true;
       }
     });
@@ -199,34 +246,34 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private clampToBounds(value: number, axis: "x" | "z") {
-    const bounds = LEVEL.playerBounds;
-    const size = axis === "x" ? bounds.width : bounds.depth;
-    const center = bounds[axis];
+    const bounds = this.level.playerBounds;
+    const size = axis === "x" ? bounds.size.x : bounds.size.z;
+    const center = bounds.position[axis];
     const halfSize = size / 2;
 
     return Math.max(center - halfSize, Math.min(center + halfSize, value));
   }
 
-  private pointInRect(x: number, z: number, rect: LevelRect) {
+  private pointInRect(x: number, z: number, rect: LevelBox) {
     return (
-      Math.abs(x - rect.x) <= rect.width / 2 &&
-      Math.abs(z - rect.z) <= rect.depth / 2
+      Math.abs(x - rect.position.x) <= rect.size.x / 2 &&
+      Math.abs(z - rect.position.z) <= rect.size.z / 2
     );
   }
 
   private playerOverlapsHazard(player: PlayerSchema, hazard: LevelHazard) {
     return (
       Math.abs(player.x - hazard.position.x) <=
-        hazard.size.width / 2 + LEVEL.playerRadius &&
+        hazard.size.x / 2 + this.level.playerRadius &&
       Math.abs(player.z - hazard.position.z) <=
-        hazard.size.depth / 2 + LEVEL.playerRadius
+        hazard.size.z / 2 + this.level.playerRadius
     );
   }
 
   private playerOverlapsGem(player: PlayerSchema, gem: LevelGem) {
     return (
       Math.hypot(player.x - gem.position.x, player.z - gem.position.z) <=
-      LEVEL.playerRadius + gem.radius
+      this.level.playerRadius + gem.radius
     );
   }
 
@@ -234,8 +281,10 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.players.forEach((player) => {
       if (!this.hasCharacter(player.character)) return;
 
-      const hazard = LEVEL.hazards.find((candidate) =>
-        this.playerOverlapsHazard(player, candidate),
+      const hazard = this.level.hazards.find(
+        (candidate) =>
+          this.state.hazardStates.get(candidate.id) !== false &&
+          this.playerOverlapsHazard(player, candidate),
       );
       if (!hazard || this.isSafeHazard(player.character, hazard)) return;
 
@@ -248,7 +297,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.players.forEach((player) => {
       if (!this.hasCharacter(player.character)) return;
 
-      LEVEL.gems.forEach((gem) => {
+      this.level.gems.forEach((gem) => {
         if (this.state.collectedGems.get(gem.id)) return;
         if (gem.type !== player.character) return;
         if (!this.playerOverlapsGem(player, gem)) return;
@@ -260,7 +309,7 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private requiredGemsCollected() {
-    return LEVEL.gems.every(
+    return this.level.gems.every(
       (gem) => !gem.required || this.state.collectedGems.get(gem.id),
     );
   }
@@ -287,13 +336,13 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private spawnFor(player: PlayerSchema) {
-    return LEVEL.playerSpawns[player.spawnIndex] ?? LEVEL.playerSpawns[0];
+    return this.level.playerSpawns[player.spawnIndex] ?? this.level.playerSpawns[0];
   }
 
   private circleIntersectsBox(x: number, z: number, box: LevelBox) {
     return (
-      Math.abs(x - box.x) <= box.width / 2 + LEVEL.playerRadius &&
-      Math.abs(z - box.z) <= box.depth / 2 + LEVEL.playerRadius
+      Math.abs(x - box.position.x) <= box.size.x / 2 + this.level.playerRadius &&
+      Math.abs(z - box.position.z) <= box.size.z / 2 + this.level.playerRadius
     );
   }
 
@@ -308,12 +357,15 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
   private pushPlayersOutOfDoor() {
     this.state.players.forEach((player) => {
-      LEVEL.doors.forEach((door) => {
+      this.level.doors.forEach((door) => {
         if (!this.circleIntersectsBox(player.x, player.z, door)) return;
 
         const safeOffset =
-          door.depth / 2 + LEVEL.playerRadius + COLLISION_MARGIN;
-        player.z = player.z <= door.z ? door.z - safeOffset : door.z + safeOffset;
+          door.size.z / 2 + this.level.playerRadius + COLLISION_MARGIN;
+        player.z =
+          player.z <= door.position.z
+            ? door.position.z - safeOffset
+            : door.position.z + safeOffset;
       });
     });
   }
