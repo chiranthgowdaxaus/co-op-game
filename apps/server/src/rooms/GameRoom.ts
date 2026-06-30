@@ -19,6 +19,7 @@ const GRAVITY = 14;
 const JUMP_SPEED = 5.4;
 const GROUND_EPSILON = 0.05;
 const FALL_RESPAWN_Y = -6;
+const COOP_MAX_X_SPREAD = 22;
 const COLLISION_MARGIN = 0.01;
 
 class PlayerSchema extends Schema {
@@ -78,6 +79,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       }
 
       player.character = character;
+      player.spawnIndex = character === "fire" ? 0 : 1;
+      this.respawnPlayer(player);
     });
 
     this.onMessage("interact", (client) => {
@@ -187,7 +190,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
       if (
         !this.hitsBarrier(nextX, player.z) &&
-        !this.hitsPlayer(sessionId, nextX, player.y, player.z)
+        !this.hitsPlayer(sessionId, nextX, player.y, player.z) &&
+        !this.exceedsCoopSpread(sessionId, nextX)
       ) {
         player.x = nextX;
       }
@@ -260,6 +264,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     });
 
     return hit;
+  }
+
+  private exceedsCoopSpread(sessionId: string, nextX: number) {
+    const xs = Array.from(this.state.players.entries()).map(([otherId, player]) =>
+      otherId === sessionId ? nextX : player.x,
+    );
+
+    return xs.length > 1 && Math.max(...xs) - Math.min(...xs) > COOP_MAX_X_SPREAD;
   }
 
   private updateVertical(
@@ -447,12 +459,22 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       this.level.doors.forEach((door) => {
         if (!this.circleIntersectsBox(player.x, player.z, door)) return;
 
-        const safeOffset =
-          door.size.z / 2 + this.level.playerRadius + COLLISION_MARGIN;
-        player.z =
-          player.z <= door.position.z
-            ? door.position.z - safeOffset
-            : door.position.z + safeOffset;
+        const safeX = door.size.x / 2 + this.level.playerRadius + COLLISION_MARGIN;
+        const safeZ = door.size.z / 2 + this.level.playerRadius + COLLISION_MARGIN;
+        const pushX = safeX - Math.abs(player.x - door.position.x);
+        const pushZ = safeZ - Math.abs(player.z - door.position.z);
+
+        if (pushX <= pushZ) {
+          player.x =
+            player.x <= door.position.x
+              ? door.position.x - safeX
+              : door.position.x + safeX;
+        } else {
+          player.z =
+            player.z <= door.position.z
+              ? door.position.z - safeZ
+              : door.position.z + safeZ;
+        }
       });
     });
   }
@@ -464,11 +486,10 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
     const input = message as Partial<MovementInput>;
     let x = typeof input.x === "number" && Number.isFinite(input.x) ? input.x : 0;
-    let z = typeof input.z === "number" && Number.isFinite(input.z) ? input.z : 0;
+    const z = 0;
     const jump = input.jump === true;
 
     x = Math.max(-1, Math.min(1, x));
-    z = Math.max(-1, Math.min(1, z));
 
     const length = Math.hypot(x, z);
     return length > 1 ? { x: x / length, z: z / length, jump } : { x, z, jump };

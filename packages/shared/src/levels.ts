@@ -86,53 +86,70 @@ export interface LevelDefinition {
 
 export const LEVEL_1: LevelDefinition = {
   id: "level-1",
-  name: "Tutorial Pressure Lever",
+  name: "Side View Tutorial",
   playerRadius: 0.5,
   floor: {
-    position: { x: 0, y: 0, z: 0 },
-    size: { x: 20, y: 0, z: 20 },
+    position: { x: 17.5, y: 0, z: 3 },
+    size: { x: 39, y: 0, z: 2.4 },
   },
   playerBounds: {
-    position: { x: 0, y: 0, z: 0 },
-    size: { x: 18, y: 0, z: 18 },
+    position: { x: 17.5, y: 0, z: 0 },
+    size: { x: 39, y: 0, z: 8 },
   },
   playerSpawns: [
-    { x: -2, y: 0, z: 0 },
-    { x: 2, y: 0, z: 0 },
+    { x: 0, y: 3, z: -3 },
+    { x: 0, y: 0, z: 3 },
   ],
-  walls: [
-    {
-      id: "left-door-wall",
-      position: { x: -6, y: 1.5, z: 3 },
-      size: { x: 6, y: 3, z: 0.5 },
-    },
-    {
-      id: "right-door-wall",
-      position: { x: 6, y: 1.5, z: 3 },
-      size: { x: 6, y: 3, z: 0.5 },
-    },
-  ],
+  walls: [],
   doors: [
     {
-      id: "main-door",
-      position: { x: 0, y: 1.5, z: 3 },
-      size: { x: 6, y: 3, z: 0.5 },
+      id: "top-lane-door",
+      position: { x: 18, y: 4.5, z: -3 },
+      size: { x: 0.5, y: 3, z: 2.2 },
+      closedY: 4.5,
+      openY: 7.5,
+    },
+    {
+      id: "bottom-lane-door",
+      position: { x: 18, y: 1.5, z: 3 },
+      size: { x: 0.5, y: 3, z: 2.2 },
       closedY: 1.5,
       openY: 4.5,
     },
   ],
   pressurePlates: [
     {
-      id: "main-plate",
-      position: { x: 0, y: 0.075, z: 0 },
+      id: "bottom-lane-plate",
+      position: { x: 6, y: 0.075, z: 3 },
       size: { x: 1.8, y: 0.15, z: 1.8 },
     },
   ],
-  platforms: [],
+  platforms: [
+    {
+      id: "top-lane-start",
+      position: { x: 7.5, y: 2.75, z: -3 },
+      size: { x: 17, y: 0.5, z: 2.4 },
+    },
+    {
+      id: "top-lane-finish",
+      position: { x: 27, y: 2.75, z: -3 },
+      size: { x: 18, y: 0.5, z: 2.4 },
+    },
+    {
+      id: "top-lane-step",
+      position: { x: 11, y: 3.5, z: -3 },
+      size: { x: 3, y: 1, z: 2.4 },
+    },
+    {
+      id: "bottom-lane-step",
+      position: { x: 11, y: 0.5, z: 3 },
+      size: { x: 3, y: 1, z: 2.4 },
+    },
+  ],
   levers: [
     {
-      id: "main-lever",
-      position: { x: 3, y: 0, z: 5 },
+      id: "top-lane-lever",
+      position: { x: 23, y: 3, z: -3 },
       interactDistance: 1.5,
       base: {
         size: { x: 0.7, y: 0.25, z: 0.7 },
@@ -144,44 +161,44 @@ export const LEVEL_1: LevelDefinition = {
   ],
   exits: [
     {
-      id: "main-exit",
-      position: { x: 0, y: 0.04, z: 7 },
-      size: { x: 4, y: 0.08, z: 3 },
+      id: "top-lane-exit",
+      position: { x: 34, y: 3.04, z: -3 },
+      size: { x: 2.5, y: 0.08, z: 2 },
+      borderHeight: 0.12,
+    },
+    {
+      id: "bottom-lane-exit",
+      position: { x: 34, y: 0.04, z: 3 },
+      size: { x: 2.5, y: 0.08, z: 2 },
       borderHeight: 0.12,
     },
   ],
   hazards: [
     {
-      id: "water-pool",
-      type: "water",
-      position: { x: -3, y: 0.035, z: 5 },
-      size: { x: 1.8, y: 0.06, z: 1.8 },
-    },
-    {
-      id: "lava-pool",
+      id: "top-lane-lava",
       type: "lava",
-      position: { x: 3, y: 0.035, z: 6.5 },
-      size: { x: 1.8, y: 0.06, z: 1.8 },
+      position: { x: 13.5, y: 3.035, z: -3 },
+      size: { x: 2, y: 0.06, z: 1.8 },
     },
     {
-      id: "poison-pool",
-      type: "poison",
-      position: { x: 0, y: 0.035, z: -3 },
-      size: { x: 1.8, y: 0.06, z: 1.4 },
+      id: "bottom-lane-water",
+      type: "water",
+      position: { x: 13.5, y: 0.035, z: 3 },
+      size: { x: 2, y: 0.06, z: 1.8 },
     },
   ],
   gems: [
     {
-      id: "water-gem-1",
-      type: "water",
-      position: { x: -4, y: 0.47, z: -1.8 },
+      id: "fire-lane-gem",
+      type: "fire",
+      position: { x: 12.5, y: 4.35, z: -3 },
       radius: 0.35,
       required: true,
     },
     {
-      id: "fire-gem-1",
-      type: "fire",
-      position: { x: 4, y: 0.47, z: 4.5 },
+      id: "water-lane-gem",
+      type: "water",
+      position: { x: 12.5, y: 1.35, z: 3 },
       radius: 0.35,
       required: true,
     },
@@ -189,14 +206,128 @@ export const LEVEL_1: LevelDefinition = {
 };
 
 export const LEVEL_2: LevelDefinition = {
-  ...LEVEL_1,
   id: "level-2",
-  name: "Level 2 Placeholder",
+  name: "Side View Lane Prototype",
+  playerRadius: 0.5,
+  floor: {
+    position: { x: 17.5, y: 0, z: 3 },
+    size: { x: 39, y: 0, z: 2.4 },
+  },
+  playerBounds: {
+    position: { x: 17.5, y: 0, z: 0 },
+    size: { x: 39, y: 0, z: 8 },
+  },
+  playerSpawns: [
+    { x: 0, y: 3, z: -3 },
+    { x: 0, y: 0, z: 3 },
+  ],
+  walls: [],
+  doors: [
+    {
+      id: "top-lane-door",
+      position: { x: 18, y: 4.5, z: -3 },
+      size: { x: 0.5, y: 3, z: 2.2 },
+      closedY: 4.5,
+      openY: 7.5,
+    },
+    {
+      id: "bottom-lane-door",
+      position: { x: 18, y: 1.5, z: 3 },
+      size: { x: 0.5, y: 3, z: 2.2 },
+      closedY: 1.5,
+      openY: 4.5,
+    },
+  ],
+  pressurePlates: [
+    {
+      id: "bottom-lane-plate",
+      position: { x: 6, y: 0.075, z: 3 },
+      size: { x: 1.8, y: 0.15, z: 1.8 },
+    },
+  ],
   platforms: [
     {
-      id: "jump-platform",
-      position: { x: 0, y: 0.4, z: -6 },
-      size: { x: 3, y: 0.8, z: 3 },
+      id: "top-lane-start",
+      position: { x: 7.5, y: 2.75, z: -3 },
+      size: { x: 17, y: 0.5, z: 2.4 },
+    },
+    {
+      id: "top-lane-finish",
+      position: { x: 27, y: 2.75, z: -3 },
+      size: { x: 18, y: 0.5, z: 2.4 },
+    },
+    {
+      id: "top-lane-step",
+      position: { x: 11, y: 3.5, z: -3 },
+      size: { x: 3, y: 1, z: 2.4 },
+    },
+    {
+      id: "bottom-lane-step",
+      position: { x: 11, y: 0.5, z: 3 },
+      size: { x: 3, y: 1, z: 2.4 },
+    },
+  ],
+  levers: [
+    {
+      id: "top-lane-lever",
+      position: { x: 23, y: 3, z: -3 },
+      interactDistance: 1.5,
+      base: {
+        size: { x: 0.7, y: 0.25, z: 0.7 },
+      },
+      stick: {
+        size: { x: 0.15, y: 1.2, z: 0.15 },
+      },
+    },
+  ],
+  exits: [
+    {
+      id: "top-lane-exit",
+      position: { x: 34, y: 3.04, z: -3 },
+      size: { x: 2.5, y: 0.08, z: 2 },
+      borderHeight: 0.12,
+    },
+    {
+      id: "bottom-lane-exit",
+      position: { x: 34, y: 0.04, z: 3 },
+      size: { x: 2.5, y: 0.08, z: 2 },
+      borderHeight: 0.12,
+    },
+  ],
+  hazards: [
+    {
+      id: "top-lane-lava",
+      type: "lava",
+      position: { x: 13.5, y: 3.035, z: -3 },
+      size: { x: 2, y: 0.06, z: 1.8 },
+    },
+    {
+      id: "bottom-lane-water",
+      type: "water",
+      position: { x: 13.5, y: 0.035, z: 3 },
+      size: { x: 2, y: 0.06, z: 1.8 },
+    },
+    {
+      id: "bottom-lane-poison",
+      type: "poison",
+      position: { x: 27, y: 0.035, z: 3 },
+      size: { x: 1.8, y: 0.06, z: 1.8 },
+    },
+  ],
+  gems: [
+    {
+      id: "fire-lane-gem",
+      type: "fire",
+      position: { x: 12.5, y: 4.35, z: -3 },
+      radius: 0.35,
+      required: true,
+    },
+    {
+      id: "water-lane-gem",
+      type: "water",
+      position: { x: 12.5, y: 1.35, z: 3 },
+      radius: 0.35,
+      required: true,
     },
   ],
 };

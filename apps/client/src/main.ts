@@ -5,7 +5,6 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js"
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.pure.js";
-import { CreateGround } from "@babylonjs/core/Meshes/Builders/groundBuilder.pure.js";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
@@ -67,11 +66,16 @@ scene.clearColor = new Color4(0.06, 0.09, 0.14, 1);
 let level = getLevelDefinition("level-1");
 let builtLevelId = "";
 
-const LEVEL_FOCUS = new Vector3(-1.2, 0, 3.5);
-const CAMERA_OFFSET = new Vector3(0, 12.5, -13.5);
-const cameraTarget = LEVEL_FOCUS.clone();
-const camera = new FreeCamera("camera", LEVEL_FOCUS.add(CAMERA_OFFSET), scene);
-camera.fov = 0.72;
+const CAMERA_DISTANCE = 24;
+const CAMERA_TARGET_Y = 2.2;
+const CAMERA_VISIBLE_HALF_WIDTH = 9;
+const cameraTarget = new Vector3(4, CAMERA_TARGET_Y, 0);
+const camera = new FreeCamera(
+  "camera",
+  new Vector3(cameraTarget.x, CAMERA_TARGET_Y, -CAMERA_DISTANCE),
+  scene,
+);
+camera.fov = 0.46;
 camera.setTarget(cameraTarget);
 camera.inputs.clear();
 
@@ -180,16 +184,21 @@ function buildLevel(levelData: LevelDefinition) {
   clearLevel();
   level = levelData;
 
+  const floorThickness = 0.12;
   const ground = trackLevelMesh(
-    CreateGround(
+    CreateBox(
       `ground-${level.id}`,
-      { width: level.floor.size.x, height: level.floor.size.z },
+      {
+        width: level.floor.size.x,
+        height: floorThickness,
+        depth: level.floor.size.z,
+      },
       scene,
     ),
   );
   ground.position.set(
     level.floor.position.x,
-    level.floor.position.y,
+    level.floor.position.y - floorThickness / 2,
     level.floor.position.z,
   );
   ground.material = groundMaterial;
@@ -593,20 +602,31 @@ function syncCharacterSelection(state: RoomState) {
 }
 
 function updateCamera(blend: number) {
-  const localTarget = room ? targets.get(room.sessionId) : undefined;
-  const targetX = localTarget
-    ? LEVEL_FOCUS.x + localTarget.x * 0.22
-    : LEVEL_FOCUS.x;
-  const targetZ = localTarget
-    ? LEVEL_FOCUS.z + (localTarget.z - LEVEL_FOCUS.z) * 0.24
-    : LEVEL_FOCUS.z;
+  const players = Array.from(targets.values());
+  const boundsMinX = level.playerBounds.position.x - level.playerBounds.size.x / 2;
+  const boundsMaxX = level.playerBounds.position.x + level.playerBounds.size.x / 2;
+  const minCameraX = boundsMinX + CAMERA_VISIBLE_HALF_WIDTH;
+  const maxCameraX = boundsMaxX - CAMERA_VISIBLE_HALF_WIDTH;
+  const fallbackX = boundsMinX + CAMERA_VISIBLE_HALF_WIDTH;
+
+  let targetX = fallbackX;
+  if (players.length > 0) {
+    const minPlayerX = Math.min(...players.map((player) => player.x));
+    const maxPlayerX = Math.max(...players.map((player) => player.x));
+    targetX = (minPlayerX + maxPlayerX) / 2 + 2;
+  }
+
+  if (minCameraX <= maxCameraX) {
+    targetX = Math.max(minCameraX, Math.min(maxCameraX, targetX));
+  }
 
   cameraTarget.x += (targetX - cameraTarget.x) * blend;
-  cameraTarget.z += (targetZ - cameraTarget.z) * blend;
+  cameraTarget.y += (CAMERA_TARGET_Y - cameraTarget.y) * blend;
+  cameraTarget.z += (0 - cameraTarget.z) * blend;
   camera.position.set(
-    cameraTarget.x + CAMERA_OFFSET.x,
-    cameraTarget.y + CAMERA_OFFSET.y,
-    cameraTarget.z + CAMERA_OFFSET.z,
+    cameraTarget.x,
+    cameraTarget.y,
+    -CAMERA_DISTANCE,
   );
   camera.setTarget(cameraTarget);
 }
@@ -699,14 +719,8 @@ function currentInput(): MovementInput {
   const x =
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
-  const z =
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
-  const length = Math.hypot(x, z);
 
-  return length > 1
-    ? { x: x / length, z: z / length, jump: jumpQueued }
-    : { x, z, jump: jumpQueued };
+  return { x, z: 0, jump: jumpQueued };
 }
 
 function sendInput() {
