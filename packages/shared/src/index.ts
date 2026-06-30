@@ -19,10 +19,12 @@ export interface PlayerState {
 
 export interface RoomState {
   players: Map<string, PlayerState>;
+  collectedGems: Map<string, boolean>;
   plateActive: boolean;
   leverActive: boolean;
   doorOpen: boolean;
   playersAtExit: number;
+  exitBlocked: boolean;
   levelComplete: boolean;
 }
 

@@ -15,6 +15,8 @@ import type {
   CharacterSelection,
   LevelBox,
   LevelExit,
+  LevelGem,
+  LevelHazard,
   LevelLever,
   MovementInput,
   PlayerCharacter,
@@ -37,6 +39,12 @@ const gameStatusText =
   document.querySelector<HTMLParagraphElement>("#game-status")!;
 const leverStatusText =
   document.querySelector<HTMLParagraphElement>("#lever-status")!;
+const gemProgressText =
+  document.querySelector<HTMLParagraphElement>("#gem-progress")!;
+const gemStatusText =
+  document.querySelector<HTMLParagraphElement>("#gem-status")!;
+const hazardStatusText =
+  document.querySelector<HTMLParagraphElement>("#hazard-status")!;
 const characterPanel =
   document.querySelector<HTMLElement>("#character-panel")!;
 const characterStatusText =
@@ -117,6 +125,32 @@ exitMaterial.diffuseColor = new Color3(0.1, 0.75, 0.65);
 const exitBorderMaterial = new StandardMaterial("exit-border", scene);
 exitBorderMaterial.diffuseColor = new Color3(0.35, 1, 0.85);
 
+const waterHazardMaterial = new StandardMaterial("water-hazard", scene);
+waterHazardMaterial.diffuseColor = new Color3(0.05, 0.45, 1);
+waterHazardMaterial.emissiveColor = new Color3(0.02, 0.12, 0.25);
+waterHazardMaterial.alpha = 0.75;
+
+const lavaHazardMaterial = new StandardMaterial("lava-hazard", scene);
+lavaHazardMaterial.diffuseColor = new Color3(1, 0.18, 0.04);
+lavaHazardMaterial.emissiveColor = new Color3(0.35, 0.08, 0.01);
+lavaHazardMaterial.alpha = 0.8;
+
+const poisonHazardMaterial = new StandardMaterial("poison-hazard", scene);
+poisonHazardMaterial.diffuseColor = new Color3(0.35, 0.9, 0.15);
+poisonHazardMaterial.emissiveColor = new Color3(0.12, 0.18, 0.08);
+poisonHazardMaterial.alpha = 0.75;
+
+const hazardBorderMaterial = new StandardMaterial("hazard-border", scene);
+hazardBorderMaterial.diffuseColor = new Color3(0.12, 0.1, 0.16);
+
+const waterGemMaterial = new StandardMaterial("water-gem", scene);
+waterGemMaterial.diffuseColor = new Color3(0.15, 0.75, 1);
+waterGemMaterial.emissiveColor = new Color3(0.04, 0.3, 0.45);
+
+const fireGemMaterial = new StandardMaterial("fire-gem", scene);
+fireGemMaterial.diffuseColor = new Color3(1, 0.5, 0.08);
+fireGemMaterial.emissiveColor = new Color3(0.35, 0.14, 0.02);
+
 const pressurePlateMeshes = LEVEL.pressurePlates.map((plate) =>
   createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
 );
@@ -142,6 +176,12 @@ LEVEL.exits.forEach((exit) => {
   createExitBorder(exit);
 });
 
+LEVEL.hazards.forEach((hazard) => createHazardMesh(hazard));
+
+const gemMeshes = new Map(
+  LEVEL.gems.map((gem) => [gem.id, createGemMesh(gem)]),
+);
+
 function createLevelBox(
   name: string,
   box: LevelBox,
@@ -156,6 +196,46 @@ function createLevelBox(
   mesh.position.set(box.x, y, box.z);
   mesh.material = material;
   return mesh;
+}
+
+function createGemMesh(gem: LevelGem) {
+  const mesh = CreateSphere(
+    `gem-${gem.id}`,
+    { diameter: gem.radius * 2, segments: 12 },
+    scene,
+  );
+  mesh.position.set(gem.position.x, gem.radius + 0.12, gem.position.z);
+  mesh.material = gem.type === "water" ? waterGemMaterial : fireGemMaterial;
+  return mesh;
+}
+
+function createHazardMesh(hazard: LevelHazard) {
+  const pool = CreateBox(
+    `hazard-${hazard.id}`,
+    { width: hazard.size.width, height: 0.06, depth: hazard.size.depth },
+    scene,
+  );
+  pool.position.set(hazard.position.x, 0.035, hazard.position.z);
+  pool.material = hazardMaterial(hazard);
+
+  const border = CreateBox(
+    `hazard-border-${hazard.id}`,
+    {
+      width: hazard.size.width + 0.15,
+      height: 0.04,
+      depth: hazard.size.depth + 0.15,
+    },
+    scene,
+  );
+  border.position.set(hazard.position.x, 0.02, hazard.position.z);
+  border.material = hazardBorderMaterial;
+}
+
+function hazardMaterial(hazard: LevelHazard) {
+  if (hazard.type === "water") return waterHazardMaterial;
+  if (hazard.type === "lava") return lavaHazardMaterial;
+
+  return poisonHazardMaterial;
 }
 
 function createLeverMeshes(definition: LevelLever) {
@@ -225,6 +305,8 @@ const pressedKeys = new Set<string>();
 let room: Room<RoomState> | null = null;
 let lastInput: MovementInput = { x: 0, z: 0 };
 let canPlay = false;
+let gemStatusTimeout: number | undefined;
+let hazardStatusTimeout: number | undefined;
 
 function syncPlayers(players: Map<string, PlayerState>) {
   const visiblePlayers = new Set<string>();
@@ -297,6 +379,7 @@ function syncPlayers(players: Map<string, PlayerState>) {
 function syncWorld(state: RoomState) {
   syncCharacterSelection(state);
   syncPlayers(state.players);
+  syncGems(state);
   pressurePlateMeshes.forEach((plate) => {
     plate.material = state.plateActive
       ? plateActiveMaterial
@@ -323,6 +406,8 @@ function syncWorld(state: RoomState) {
   gameStatusText.hidden = !canPlay;
   gameStatusText.textContent = state.levelComplete
     ? "Level complete"
+    : state.exitBlocked
+      ? "Collect all gems before exiting"
     : state.playersAtExit > 0
       ? "Waiting for partner at exit"
       : state.leverActive
@@ -332,6 +417,20 @@ function syncWorld(state: RoomState) {
           : "Door closed";
   syncInteractionPrompt(state);
   if (canPlay) sendInput();
+}
+
+function syncGems(state: RoomState) {
+  const requiredGems = LEVEL.gems.filter((gem) => gem.required);
+  const collectedRequired = requiredGems.filter((gem) =>
+    state.collectedGems.get(gem.id),
+  ).length;
+
+  gemProgressText.hidden = !canPlay;
+  gemProgressText.textContent = `Gems: ${collectedRequired}/${requiredGems.length}`;
+
+  LEVEL.gems.forEach((gem) => {
+    gemMeshes.get(gem.id)?.setEnabled(!state.collectedGems.get(gem.id));
+  });
 }
 
 const interactionText =
@@ -421,6 +520,24 @@ function connectionErrorMessage(message: string) {
   return message || "Could not connect.";
 }
 
+function showHazardStatus(message: string) {
+  hazardStatusText.hidden = false;
+  hazardStatusText.textContent = message;
+  if (hazardStatusTimeout) window.clearTimeout(hazardStatusTimeout);
+  hazardStatusTimeout = window.setTimeout(() => {
+    hazardStatusText.hidden = true;
+  }, 2200);
+}
+
+function showGemStatus(message: string) {
+  gemStatusText.hidden = false;
+  gemStatusText.textContent = message;
+  if (gemStatusTimeout) window.clearTimeout(gemStatusTimeout);
+  gemStatusTimeout = window.setTimeout(() => {
+    gemStatusText.hidden = true;
+  }, 2200);
+}
+
 async function connect(action: () => Promise<Room<RoomState>>) {
   setConnectControlsDisabled(true);
   statusText.textContent = "Connecting…";
@@ -436,10 +553,15 @@ async function connect(action: () => Promise<Room<RoomState>>) {
     room.onMessage("selectionError", (message: string) => {
       statusText.textContent = message;
     });
+    room.onMessage("gemStatus", showGemStatus);
+    room.onMessage("hazardStatus", showHazardStatus);
     room.onLeave(() => {
       room = null;
       canPlay = false;
       characterPanel.hidden = true;
+      gemProgressText.hidden = true;
+      gemStatusText.hidden = true;
+      hazardStatusText.hidden = true;
       statusText.textContent = "Disconnected.";
     });
 
