@@ -36,3 +36,4 @@ export interface RoomState {
 }
 
 export * from "./levels.js";
+export * from "./levelValidation.js";
