@@ -15,11 +15,19 @@ const ROOM_CODES = "$room_codes";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TICK_MS = 50;
 const MOVE_SPEED = 4;
+const GRAVITY = 14;
+const JUMP_SPEED = 5.4;
+const GROUND_EPSILON = 0.05;
+const FALL_RESPAWN_Y = -6;
+const COOP_MAX_X_SPREAD = 22;
 const COLLISION_MARGIN = 0.01;
 
 class PlayerSchema extends Schema {
   @type("float32") x = 0;
+  @type("float32") y = 0;
   @type("float32") z = 0;
+  @type("float32") velocityY = 0;
+  @type("boolean") grounded = true;
   @type("uint8") spawnIndex = 0;
   @type("string") character: PlayerCharacterState = "";
 }
@@ -71,6 +79,8 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       }
 
       player.character = character;
+      player.spawnIndex = character === "fire" ? 0 : 1;
+      this.respawnPlayer(player);
     });
 
     this.onMessage("interact", (client) => {
@@ -121,9 +131,12 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     player.spawnIndex = this.state.players.size;
     const spawn = this.spawnFor(player);
     player.x = spawn.x;
+    player.y = spawn.y;
     player.z = spawn.z;
+    player.velocityY = 0;
+    player.grounded = true;
     this.state.players.set(client.sessionId, player);
-    this.inputs.set(client.sessionId, { x: 0, z: 0 });
+    this.inputs.set(client.sessionId, { x: 0, z: 0, jump: false });
   }
 
   onLeave(client: Client) {
@@ -154,15 +167,19 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.players.forEach((player, sessionId) => {
       const spawn = this.spawnFor(player);
       player.x = spawn.x;
+      player.y = spawn.y;
       player.z = spawn.z;
-      this.inputs.set(sessionId, { x: 0, z: 0 });
+      player.velocityY = 0;
+      player.grounded = true;
+      this.inputs.set(sessionId, { x: 0, z: 0, jump: false });
     });
   }
 
   private updatePlayers(deltaTime: number) {
     if (!this.gameReady()) return;
 
-    const distance = MOVE_SPEED * (deltaTime / 1000);
+    const deltaSeconds = deltaTime / 1000;
+    const distance = MOVE_SPEED * deltaSeconds;
 
     this.inputs.forEach((input, sessionId) => {
       const player = this.state.players.get(sessionId);
@@ -173,16 +190,20 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
 
       if (
         !this.hitsBarrier(nextX, player.z) &&
-        !this.hitsPlayer(sessionId, nextX, player.z)
+        !this.hitsPlayer(sessionId, nextX, player.y, player.z) &&
+        !this.exceedsCoopSpread(sessionId, nextX)
       ) {
         player.x = nextX;
       }
       if (
         !this.hitsBarrier(player.x, nextZ) &&
-        !this.hitsPlayer(sessionId, player.x, nextZ)
+        !this.hitsPlayer(sessionId, player.x, player.y, nextZ)
       ) {
         player.z = nextZ;
       }
+
+      this.updateVertical(player, input, deltaSeconds);
+      input.jump = false;
     });
 
     this.checkHazards();
@@ -228,17 +249,79 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     return hitsWall || hitsDoor;
   }
 
-  private hitsPlayer(sessionId: string, x: number, z: number) {
+  private hitsPlayer(sessionId: string, x: number, y: number, z: number) {
     let hit = false;
 
     this.state.players.forEach((other, otherId) => {
       if (otherId === sessionId) return;
-      if (Math.hypot(other.x - x, other.z - z) < this.level.playerRadius * 2) {
+      const collisionDistance = this.level.playerRadius * 2;
+      if (
+        Math.abs(other.y - y) < collisionDistance &&
+        Math.hypot(other.x - x, other.z - z) < collisionDistance
+      ) {
         hit = true;
       }
     });
 
     return hit;
+  }
+
+  private exceedsCoopSpread(sessionId: string, nextX: number) {
+    const xs = Array.from(this.state.players.entries()).map(([otherId, player]) =>
+      otherId === sessionId ? nextX : player.x,
+    );
+
+    return xs.length > 1 && Math.max(...xs) - Math.min(...xs) > COOP_MAX_X_SPREAD;
+  }
+
+  private updateVertical(
+    player: PlayerSchema,
+    input: MovementInput,
+    deltaSeconds: number,
+  ) {
+    if (input.jump && player.grounded) {
+      player.velocityY = JUMP_SPEED;
+      player.grounded = false;
+    }
+
+    if (player.grounded) {
+      const supportY = this.groundHeightBelow(
+        player.x,
+        player.z,
+        player.y + GROUND_EPSILON,
+      );
+      if (supportY === null || Math.abs(player.y - supportY) > GROUND_EPSILON) {
+        player.grounded = false;
+      } else {
+        player.y = supportY;
+        player.velocityY = 0;
+        return;
+      }
+    }
+
+    const previousY = player.y;
+    player.velocityY -= GRAVITY * deltaSeconds;
+    player.y += player.velocityY * deltaSeconds;
+
+    const landingY = this.groundHeightBelow(
+      player.x,
+      player.z,
+      previousY + GROUND_EPSILON,
+    );
+    if (
+      player.velocityY <= 0 &&
+      landingY !== null &&
+      player.y <= landingY &&
+      previousY >= landingY - GROUND_EPSILON
+    ) {
+      player.y = landingY;
+      player.velocityY = 0;
+      player.grounded = true;
+    }
+
+    if (player.y < FALL_RESPAWN_Y) {
+      this.respawnPlayer(player);
+    }
   }
 
   private updateDoorOpen() {
@@ -259,6 +342,19 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       Math.abs(x - rect.position.x) <= rect.size.x / 2 &&
       Math.abs(z - rect.position.z) <= rect.size.z / 2
     );
+  }
+
+  private groundHeightBelow(x: number, z: number, maxY: number) {
+    const surfaces = [this.level.floor, ...this.level.platforms];
+    let groundY: number | null = null;
+
+    surfaces.forEach((surface) => {
+      const topY = surface.position.y + surface.size.y / 2;
+      if (!this.pointInRect(x, z, surface) || topY > maxY) return;
+      groundY = groundY === null ? topY : Math.max(groundY, topY);
+    });
+
+    return groundY;
   }
 
   private playerOverlapsHazard(player: PlayerSchema, hazard: LevelHazard) {
@@ -332,7 +428,10 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   private respawnPlayer(player: PlayerSchema) {
     const spawn = this.spawnFor(player);
     player.x = spawn.x;
+    player.y = spawn.y;
     player.z = spawn.z;
+    player.velocityY = 0;
+    player.grounded = true;
   }
 
   private spawnFor(player: PlayerSchema) {
@@ -360,28 +459,40 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       this.level.doors.forEach((door) => {
         if (!this.circleIntersectsBox(player.x, player.z, door)) return;
 
-        const safeOffset =
-          door.size.z / 2 + this.level.playerRadius + COLLISION_MARGIN;
-        player.z =
-          player.z <= door.position.z
-            ? door.position.z - safeOffset
-            : door.position.z + safeOffset;
+        const safeX = door.size.x / 2 + this.level.playerRadius + COLLISION_MARGIN;
+        const safeZ = door.size.z / 2 + this.level.playerRadius + COLLISION_MARGIN;
+        const pushX = safeX - Math.abs(player.x - door.position.x);
+        const pushZ = safeZ - Math.abs(player.z - door.position.z);
+
+        if (pushX <= pushZ) {
+          player.x =
+            player.x <= door.position.x
+              ? door.position.x - safeX
+              : door.position.x + safeX;
+        } else {
+          player.z =
+            player.z <= door.position.z
+              ? door.position.z - safeZ
+              : door.position.z + safeZ;
+        }
       });
     });
   }
 
   private sanitizeInput(message: unknown): MovementInput {
-    if (!message || typeof message !== "object") return { x: 0, z: 0 };
+    if (!message || typeof message !== "object") {
+      return { x: 0, z: 0, jump: false };
+    }
 
     const input = message as Partial<MovementInput>;
     let x = typeof input.x === "number" && Number.isFinite(input.x) ? input.x : 0;
-    let z = typeof input.z === "number" && Number.isFinite(input.z) ? input.z : 0;
+    const z = 0;
+    const jump = input.jump === true;
 
     x = Math.max(-1, Math.min(1, x));
-    z = Math.max(-1, Math.min(1, z));
 
     const length = Math.hypot(x, z);
-    return length > 1 ? { x: x / length, z: z / length } : { x, z };
+    return length > 1 ? { x: x / length, z: z / length, jump } : { x, z, jump };
   }
 
   private getSelectedCharacter(message: unknown): PlayerCharacter | null {

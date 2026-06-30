@@ -5,7 +5,6 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js"
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder.pure.js";
-import { CreateGround } from "@babylonjs/core/Meshes/Builders/groundBuilder.pure.js";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
@@ -67,11 +66,16 @@ scene.clearColor = new Color4(0.06, 0.09, 0.14, 1);
 let level = getLevelDefinition("level-1");
 let builtLevelId = "";
 
-const LEVEL_FOCUS = new Vector3(-1.2, 0, 3.5);
-const CAMERA_OFFSET = new Vector3(0, 12.5, -13.5);
-const cameraTarget = LEVEL_FOCUS.clone();
-const camera = new FreeCamera("camera", LEVEL_FOCUS.add(CAMERA_OFFSET), scene);
-camera.fov = 0.72;
+const CAMERA_DISTANCE = 24;
+const CAMERA_TARGET_Y = 2.2;
+const CAMERA_VISIBLE_HALF_WIDTH = 9;
+const cameraTarget = new Vector3(4, CAMERA_TARGET_Y, 0);
+const camera = new FreeCamera(
+  "camera",
+  new Vector3(cameraTarget.x, CAMERA_TARGET_Y, -CAMERA_DISTANCE),
+  scene,
+);
+camera.fov = 0.46;
 camera.setTarget(cameraTarget);
 camera.inputs.clear();
 
@@ -113,6 +117,9 @@ doorOpenMaterial.diffuseColor = new Color3(0.25, 0.65, 0.3);
 
 const wallMaterial = new StandardMaterial("wall", scene);
 wallMaterial.diffuseColor = new Color3(0.3, 0.34, 0.42);
+
+const platformMaterial = new StandardMaterial("platform", scene);
+platformMaterial.diffuseColor = new Color3(0.36, 0.42, 0.52);
 
 const leverBaseMaterial = new StandardMaterial("lever-base", scene);
 leverBaseMaterial.diffuseColor = new Color3(0.16, 0.18, 0.22);
@@ -177,16 +184,21 @@ function buildLevel(levelData: LevelDefinition) {
   clearLevel();
   level = levelData;
 
+  const floorThickness = 0.12;
   const ground = trackLevelMesh(
-    CreateGround(
+    CreateBox(
       `ground-${level.id}`,
-      { width: level.floor.size.x, height: level.floor.size.z },
+      {
+        width: level.floor.size.x,
+        height: floorThickness,
+        depth: level.floor.size.z,
+      },
       scene,
     ),
   );
   ground.position.set(
     level.floor.position.x,
-    level.floor.position.y,
+    level.floor.position.y - floorThickness / 2,
     level.floor.position.z,
   );
   ground.material = groundMaterial;
@@ -207,6 +219,9 @@ function buildLevel(levelData: LevelDefinition) {
 
   level.walls.forEach((wall) =>
     createLevelBox(`wall-${wall.id}`, wall, wallMaterial),
+  );
+  level.platforms.forEach((platform) =>
+    createLevelBox(`platform-${platform.id}`, platform, platformMaterial),
   );
 
   leverMeshes = level.levers.map((lever) => createLeverMeshes(lever));
@@ -404,8 +419,9 @@ const client = new Client(import.meta.env.VITE_SERVER_URL ?? "http://localhost:2
 const pressedKeys = new Set<string>();
 
 let room: Room<RoomState> | null = null;
-let lastInput: MovementInput = { x: 0, z: 0 };
+let lastInput: MovementInput = { x: 0, z: 0, jump: false };
 let canPlay = false;
+let jumpQueued = false;
 let gemStatusTimeout: number | undefined;
 let hazardStatusTimeout: number | undefined;
 
@@ -416,7 +432,10 @@ function syncPlayers(players: Map<string, PlayerState>) {
   players.forEach((player, sessionId) => {
     targets.set(sessionId, {
       x: player.x,
+      y: player.y,
       z: player.z,
+      velocityY: player.velocityY,
+      grounded: player.grounded,
       character: player.character,
     });
     if (sessionId !== room?.sessionId) partner = player;
@@ -429,7 +448,7 @@ function syncPlayers(players: Map<string, PlayerState>) {
         { diameter: 1, segments: 16 },
         scene,
       );
-      body.position.set(player.x, 0.5, player.z);
+      body.position.set(player.x, player.y + level.playerRadius, player.z);
       body.material = playerMaterial(player.character);
 
       const aura = CreateSphere(
@@ -583,20 +602,31 @@ function syncCharacterSelection(state: RoomState) {
 }
 
 function updateCamera(blend: number) {
-  const localTarget = room ? targets.get(room.sessionId) : undefined;
-  const targetX = localTarget
-    ? LEVEL_FOCUS.x + localTarget.x * 0.22
-    : LEVEL_FOCUS.x;
-  const targetZ = localTarget
-    ? LEVEL_FOCUS.z + (localTarget.z - LEVEL_FOCUS.z) * 0.24
-    : LEVEL_FOCUS.z;
+  const players = Array.from(targets.values());
+  const boundsMinX = level.playerBounds.position.x - level.playerBounds.size.x / 2;
+  const boundsMaxX = level.playerBounds.position.x + level.playerBounds.size.x / 2;
+  const minCameraX = boundsMinX + CAMERA_VISIBLE_HALF_WIDTH;
+  const maxCameraX = boundsMaxX - CAMERA_VISIBLE_HALF_WIDTH;
+  const fallbackX = boundsMinX + CAMERA_VISIBLE_HALF_WIDTH;
+
+  let targetX = fallbackX;
+  if (players.length > 0) {
+    const minPlayerX = Math.min(...players.map((player) => player.x));
+    const maxPlayerX = Math.max(...players.map((player) => player.x));
+    targetX = (minPlayerX + maxPlayerX) / 2 + 2;
+  }
+
+  if (minCameraX <= maxCameraX) {
+    targetX = Math.max(minCameraX, Math.min(maxCameraX, targetX));
+  }
 
   cameraTarget.x += (targetX - cameraTarget.x) * blend;
-  cameraTarget.z += (targetZ - cameraTarget.z) * blend;
+  cameraTarget.y += (CAMERA_TARGET_Y - cameraTarget.y) * blend;
+  cameraTarget.z += (0 - cameraTarget.z) * blend;
   camera.position.set(
-    cameraTarget.x + CAMERA_OFFSET.x,
-    cameraTarget.y + CAMERA_OFFSET.y,
-    cameraTarget.z + CAMERA_OFFSET.z,
+    cameraTarget.x,
+    cameraTarget.y,
+    -CAMERA_DISTANCE,
   );
   camera.setTarget(cameraTarget);
 }
@@ -689,22 +719,21 @@ function currentInput(): MovementInput {
   const x =
     Number(pressedKeys.has("KeyD") || pressedKeys.has("ArrowRight")) -
     Number(pressedKeys.has("KeyA") || pressedKeys.has("ArrowLeft"));
-  const z =
-    Number(pressedKeys.has("KeyW") || pressedKeys.has("ArrowUp")) -
-    Number(pressedKeys.has("KeyS") || pressedKeys.has("ArrowDown"));
-  const length = Math.hypot(x, z);
 
-  return length > 1 ? { x: x / length, z: z / length } : { x, z };
+  return { x, z: 0, jump: jumpQueued };
 }
 
 function sendInput() {
   if (!room || !canPlay) return;
 
   const input = currentInput();
-  if (input.x === lastInput.x && input.z === lastInput.z) return;
+  if (input.x === lastInput.x && input.z === lastInput.z && !input.jump) {
+    return;
+  }
 
-  lastInput = input;
   room.send("input", input);
+  lastInput = { x: input.x, z: input.z, jump: false };
+  jumpQueued = false;
 }
 
 createButton.addEventListener("click", () => {
@@ -748,6 +777,14 @@ roomCodeInput.addEventListener("input", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (!event.repeat && canPlay) {
+      jumpQueued = true;
+      sendInput();
+    }
+    return;
+  }
   if (event.code === "KeyE") {
     if (!event.repeat && canPlay) room?.send("interact");
     return;
@@ -765,6 +802,7 @@ window.addEventListener("keyup", (event) => {
 
 window.addEventListener("blur", () => {
   pressedKeys.clear();
+  jumpQueued = false;
   sendInput();
 });
 
@@ -779,6 +817,7 @@ engine.runRenderLoop(() => {
     const target = targets.get(sessionId);
     if (!target) return;
     body.position.x += (target.x - body.position.x) * blend;
+    body.position.y += (target.y + level.playerRadius - body.position.y) * blend;
     body.position.z += (target.z - body.position.z) * blend;
     aura.position.copyFrom(body.position);
   });

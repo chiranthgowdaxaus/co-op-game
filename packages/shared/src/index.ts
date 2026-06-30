@@ -1,6 +1,7 @@
 export interface MovementInput {
   x: number;
   z: number;
+  jump: boolean;
 }
 
 export type PlayerCharacter = "water" | "fire";
@@ -13,7 +14,10 @@ export interface CharacterSelection {
 
 export interface PlayerState {
   x: number;
+  y: number;
   z: number;
+  velocityY: number;
+  grounded: boolean;
   character: PlayerCharacterState;
 }
 
