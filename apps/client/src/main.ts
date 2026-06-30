@@ -19,6 +19,7 @@ import type {
   LevelGem,
   LevelHazard,
   LevelLever,
+  LevelPressurePlate,
   MovementInput,
   PlayerCharacter,
   PlayerCharacterState,
@@ -133,6 +134,12 @@ exitMaterial.diffuseColor = new Color3(0.1, 0.75, 0.65);
 const exitBorderMaterial = new StandardMaterial("exit-border", scene);
 exitBorderMaterial.diffuseColor = new Color3(0.35, 1, 0.85);
 
+const waterExitMaterial = new StandardMaterial("water-exit", scene);
+waterExitMaterial.diffuseColor = new Color3(0.15, 0.55, 1);
+
+const fireExitMaterial = new StandardMaterial("fire-exit", scene);
+fireExitMaterial.diffuseColor = new Color3(1, 0.45, 0.12);
+
 const waterHazardMaterial = new StandardMaterial("water-hazard", scene);
 waterHazardMaterial.diffuseColor = new Color3(0.05, 0.45, 1);
 waterHazardMaterial.emissiveColor = new Color3(0.02, 0.12, 0.25);
@@ -160,7 +167,7 @@ fireGemMaterial.diffuseColor = new Color3(1, 0.5, 0.08);
 fireGemMaterial.emissiveColor = new Color3(0.35, 0.14, 0.02);
 
 let levelMeshes: Mesh[] = [];
-let pressurePlateMeshes: Mesh[] = [];
+let pressurePlateMeshes: Array<{ definition: LevelPressurePlate; mesh: Mesh }> = [];
 let doorMeshes: Array<{ definition: LevelDoor; mesh: Mesh }> = [];
 let leverMeshes: Array<{ definition: LevelLever; stick: Mesh }> = [];
 let gemMeshes = new Map<string, Mesh>();
@@ -203,9 +210,14 @@ function buildLevel(levelData: LevelDefinition) {
   );
   ground.material = groundMaterial;
 
-  pressurePlateMeshes = level.pressurePlates.map((plate) =>
-    createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
-  );
+  pressurePlateMeshes = level.pressurePlates.map((definition) => ({
+    definition,
+    mesh: createLevelBox(
+      `pressure-plate-${definition.id}`,
+      definition,
+      plateInactiveMaterial,
+    ),
+  }));
 
   doorMeshes = level.doors.map((doorDefinition) => ({
     definition: doorDefinition,
@@ -227,7 +239,7 @@ function buildLevel(levelData: LevelDefinition) {
   leverMeshes = level.levers.map((lever) => createLeverMeshes(lever));
 
   level.exits.forEach((exit) => {
-    createLevelBox(`exit-${exit.id}`, exit, exitMaterial);
+    createLevelBox(`exit-${exit.id}`, exit, exitMaterialFor(exit));
     createExitBorder(exit);
   });
 
@@ -297,6 +309,13 @@ function hazardMaterial(hazard: LevelHazard) {
   if (hazard.type === "lava") return lavaHazardMaterial;
 
   return poisonHazardMaterial;
+}
+
+function exitMaterialFor(exit: LevelExit) {
+  if (exit.character === "water") return waterExitMaterial;
+  if (exit.character === "fire") return fireExitMaterial;
+
+  return exitMaterial;
 }
 
 function createLeverMeshes(definition: LevelLever) {
@@ -506,20 +525,23 @@ function syncWorld(state: RoomState) {
   syncPlayers(state.players);
   syncGems(state);
   syncLevelActions(state);
-  pressurePlateMeshes.forEach((plate) => {
-    plate.material = state.plateActive
+  pressurePlateMeshes.forEach(({ definition, mesh }) => {
+    const active = state.pressurePlateStates.get(definition.id) ?? state.plateActive;
+    mesh.material = active
       ? plateActiveMaterial
       : plateInactiveMaterial;
   });
   doorMeshes.forEach(({ definition, mesh }) => {
-    mesh.position.y = state.doorOpen ? definition.openY : definition.closedY;
-    mesh.material = state.doorOpen ? doorOpenMaterial : doorClosedMaterial;
+    const open = state.doorStates.get(definition.id) ?? state.doorOpen;
+    mesh.position.y = open ? definition.openY : definition.closedY;
+    mesh.material = open ? doorOpenMaterial : doorClosedMaterial;
   });
   leverMeshes.forEach(({ definition, stick }) => {
-    stick.material = state.leverActive
+    const active = state.leverStates.get(definition.id) ?? state.leverActive;
+    stick.material = active
       ? plateActiveMaterial
       : leverInactiveMaterial;
-    positionLeverStick(stick, definition, state.leverActive);
+    positionLeverStick(stick, definition, active);
   });
   leverStatusText.hidden = !canPlay;
   leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
