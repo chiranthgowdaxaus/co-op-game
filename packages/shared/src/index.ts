@@ -26,6 +26,9 @@ export interface RoomState {
   players: Map<string, PlayerState>;
   collectedGems: Map<string, boolean>;
   hazardStates: Map<string, boolean>;
+  pressurePlateStates: Map<string, boolean>;
+  leverStates: Map<string, boolean>;
+  doorStates: Map<string, boolean>;
   plateActive: boolean;
   leverActive: boolean;
   doorOpen: boolean;

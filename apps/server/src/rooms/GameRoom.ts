@@ -3,6 +3,8 @@ import { Client, Room } from "colyseus";
 import type {
   CharacterSelection,
   LevelBox,
+  LevelDoor,
+  LevelExit,
   LevelGem,
   LevelHazard,
   MovementInput,
@@ -37,6 +39,9 @@ class GameStateSchema extends Schema {
   @type({ map: PlayerSchema }) players = new MapSchema<PlayerSchema>();
   @type({ map: "boolean" }) collectedGems = new MapSchema<boolean>();
   @type({ map: "boolean" }) hazardStates = new MapSchema<boolean>();
+  @type({ map: "boolean" }) pressurePlateStates = new MapSchema<boolean>();
+  @type({ map: "boolean" }) leverStates = new MapSchema<boolean>();
+  @type({ map: "boolean" }) doorStates = new MapSchema<boolean>();
   @type("boolean") plateActive = false;
   @type("boolean") leverActive = false;
   @type("boolean") doorOpen = false;
@@ -87,23 +92,23 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       if (!this.gameReady()) return;
 
       const player = this.state.players.get(client.sessionId);
-      if (
-        player &&
-        this.level.levers.some(
-          (lever) =>
-            Math.hypot(
-              player.x - lever.position.x,
-              player.z - lever.position.z,
-            ) <=
-            lever.interactDistance,
-        )
-      ) {
-        const wasDoorOpen = this.state.doorOpen;
-        this.state.leverActive = !this.state.leverActive;
+      const lever = player
+        ? this.level.levers.find(
+            (candidate) =>
+              Math.hypot(
+                player.x - candidate.position.x,
+                player.z - candidate.position.z,
+              ) <=
+              candidate.interactDistance,
+          )
+        : undefined;
+
+      if (lever) {
+        const previousDoorStates = this.currentDoorStates();
+        this.state.leverStates.set(lever.id, !this.state.leverStates.get(lever.id));
+        this.updateControlAggregates();
         this.updateDoorOpen();
-        if (wasDoorOpen && !this.state.doorOpen) {
-          this.pushPlayersOutOfDoor();
-        }
+        this.pushPlayersOutOfClosedDoors(previousDoorStates);
       }
     });
 
@@ -152,10 +157,18 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.state.currentLevelId = levelId;
     this.state.collectedGems.clear();
     this.state.hazardStates.clear();
+    this.state.pressurePlateStates.clear();
+    this.state.leverStates.clear();
+    this.state.doorStates.clear();
     this.level.gems.forEach((gem) => this.state.collectedGems.set(gem.id, false));
     this.level.hazards.forEach((hazard) =>
       this.state.hazardStates.set(hazard.id, true),
     );
+    this.level.pressurePlates.forEach((plate) =>
+      this.state.pressurePlateStates.set(plate.id, false),
+    );
+    this.level.levers.forEach((lever) => this.state.leverStates.set(lever.id, false));
+    this.level.doors.forEach((door) => this.state.doorStates.set(door.id, false));
     this.state.plateActive = false;
     this.state.leverActive = false;
     this.state.doorOpen = false;
@@ -209,20 +222,12 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     this.checkHazards();
     this.checkGems();
 
-    const wasDoorOpen = this.state.doorOpen;
-    this.state.plateActive = Array.from(this.state.players.values()).some(
-      (player) =>
-        this.level.pressurePlates.some((plate) =>
-          this.pointInRect(player.x, player.z, plate),
-        ),
-    );
+    const previousDoorStates = this.currentDoorStates();
+    this.updatePressurePlates();
     this.updateDoorOpen();
-    if (wasDoorOpen && !this.state.doorOpen) {
-      this.pushPlayersOutOfDoor();
-    }
+    this.pushPlayersOutOfClosedDoors(previousDoorStates);
     this.state.playersAtExit = Array.from(this.state.players.values()).filter(
-      (player) =>
-        this.level.exits.some((exit) => this.pointInRect(player.x, player.z, exit)),
+      (player) => this.playerAtExit(player),
     ).length;
     const allRequiredGemsCollected = this.requiredGemsCollected();
     this.state.exitBlocked =
@@ -243,8 +248,9 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
       this.circleIntersectsBox(x, z, wall),
     );
     const hitsDoor =
-      !this.state.doorOpen &&
-      this.level.doors.some((door) => this.circleIntersectsBox(x, z, door));
+      this.level.doors.some(
+        (door) => !this.isDoorOpen(door) && this.circleIntersectsBox(x, z, door),
+      );
 
     return hitsWall || hitsDoor;
   }
@@ -325,7 +331,53 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private updateDoorOpen() {
-    this.state.doorOpen = this.state.plateActive || this.state.leverActive;
+    let anyDoorOpen = false;
+
+    this.level.doors.forEach((door) => {
+      const open = this.shouldOpenDoor(door);
+      this.state.doorStates.set(door.id, open);
+      if (open) anyDoorOpen = true;
+    });
+
+    this.state.doorOpen = anyDoorOpen;
+  }
+
+  private updatePressurePlates() {
+    this.level.pressurePlates.forEach((plate) => {
+      const active = Array.from(this.state.players.values()).some((player) =>
+        this.pointInRect(player.x, player.z, plate),
+      );
+      this.state.pressurePlateStates.set(plate.id, active);
+    });
+
+    this.updateControlAggregates();
+  }
+
+  private updateControlAggregates() {
+    this.state.plateActive = Array.from(this.state.pressurePlateStates.values()).some(Boolean);
+    this.state.leverActive = Array.from(this.state.leverStates.values()).some(Boolean);
+  }
+
+  private shouldOpenDoor(door: LevelDoor) {
+    if (!door.opensWith) return this.state.plateActive || this.state.leverActive;
+
+    return (
+      door.opensWith.pressurePlateIds?.some((id) =>
+        this.state.pressurePlateStates.get(id),
+      ) ||
+      door.opensWith.leverIds?.some((id) => this.state.leverStates.get(id)) ||
+      false
+    );
+  }
+
+  private isDoorOpen(door: LevelDoor) {
+    return this.state.doorStates.get(door.id) ?? this.state.doorOpen;
+  }
+
+  private currentDoorStates() {
+    return new Map(
+      this.level.doors.map((door) => [door.id, this.isDoorOpen(door)]),
+    );
   }
 
   private clampToBounds(value: number, axis: "x" | "z") {
@@ -358,11 +410,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
   }
 
   private playerOverlapsHazard(player: PlayerSchema, hazard: LevelHazard) {
+    const hazardTop = hazard.position.y + hazard.size.y / 2;
+
     return (
       Math.abs(player.x - hazard.position.x) <=
         hazard.size.x / 2 + this.level.playerRadius &&
       Math.abs(player.z - hazard.position.z) <=
-        hazard.size.z / 2 + this.level.playerRadius
+        hazard.size.z / 2 + this.level.playerRadius &&
+      player.y <= hazardTop
     );
   }
 
@@ -438,6 +493,16 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     return this.level.playerSpawns[player.spawnIndex] ?? this.level.playerSpawns[0];
   }
 
+  private playerAtExit(player: PlayerSchema) {
+    return this.level.exits.some(
+      (exit) => this.exitMatchesPlayer(exit, player) && this.pointInRect(player.x, player.z, exit),
+    );
+  }
+
+  private exitMatchesPlayer(exit: LevelExit, player: PlayerSchema) {
+    return !exit.character || exit.character === player.character;
+  }
+
   private circleIntersectsBox(x: number, z: number, box: LevelBox) {
     return (
       Math.abs(x - box.position.x) <= box.size.x / 2 + this.level.playerRadius &&
@@ -454,9 +519,14 @@ export class GameRoom extends Room<{ state: GameStateSchema }> {
     );
   }
 
-  private pushPlayersOutOfDoor() {
+  private pushPlayersOutOfClosedDoors(previousDoorStates: Map<string, boolean>) {
+    const closedDoors = this.level.doors.filter(
+      (door) => previousDoorStates.get(door.id) && !this.isDoorOpen(door),
+    );
+    if (closedDoors.length === 0) return;
+
     this.state.players.forEach((player) => {
-      this.level.doors.forEach((door) => {
+      closedDoors.forEach((door) => {
         if (!this.circleIntersectsBox(player.x, player.z, door)) return;
 
         const safeX = door.size.x / 2 + this.level.playerRadius + COLLISION_MARGIN;

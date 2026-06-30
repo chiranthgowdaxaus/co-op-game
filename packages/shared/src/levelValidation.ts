@@ -1,6 +1,7 @@
 import type {
   LevelBox,
   LevelDefinition,
+  LevelDoor,
   LevelGemType,
   LevelHazardType,
   LevelLever,
@@ -8,6 +9,7 @@ import type {
 
 const HAZARD_TYPES: LevelHazardType[] = ["water", "lava", "poison"];
 const GEM_TYPES: LevelGemType[] = ["water", "fire"];
+const EXIT_CHARACTERS = ["water", "fire"];
 
 export function assertValidLevels(levels: LevelDefinition[]) {
   const errors = validateLevels(levels);
@@ -54,6 +56,8 @@ export function validateLevel(level: LevelDefinition) {
   const exits = readArray(`${label}.exits`, level.exits, errors);
   const hazards = readArray(`${label}.hazards`, level.hazards, errors);
   const gems = readArray(`${label}.gems`, level.gems, errors);
+  const pressurePlateIds = new Set(pressurePlates.map((plate) => plate.id));
+  const leverIds = new Set(levers.map((lever) => lever.id));
 
   if (!isNonEmptyString(level.name)) errors.push(`${label}: name is required.`);
   if (!isPositive(level.playerRadius)) {
@@ -84,6 +88,7 @@ export function validateLevel(level: LevelDefinition) {
     validateBox(`${label}.doors.${door.id}`, door, errors);
     validateNumber(`${label}.doors.${door.id}.closedY`, door.closedY, errors);
     validateNumber(`${label}.doors.${door.id}.openY`, door.openY, errors);
+    validateDoorControls(label, door, pressurePlateIds, leverIds, errors);
   });
 
   pressurePlates.forEach((plate) => {
@@ -106,6 +111,9 @@ export function validateLevel(level: LevelDefinition) {
     validateBox(`${label}.exits.${exit.id}`, exit, errors);
     validateNumber(`${label}.exits.${exit.id}.borderHeight`, exit.borderHeight, errors);
     validateWithinBounds(`${label}.exits.${exit.id}.position`, exit.position, level, errors);
+    if (exit.character && !EXIT_CHARACTERS.includes(exit.character)) {
+      errors.push(`${label}.exits.${exit.id}.character must be water or fire.`);
+    }
   });
 
   hazards.forEach((hazard) => {
@@ -133,6 +141,46 @@ export function validateLevel(level: LevelDefinition) {
   });
 
   return errors;
+}
+
+function validateDoorControls(
+  levelId: string,
+  door: LevelDoor,
+  pressurePlateIds: Set<string>,
+  leverIds: Set<string>,
+  errors: string[],
+) {
+  if (!door.opensWith) return;
+
+  validateReferences(
+    `${levelId}.doors.${door.id}.opensWith.pressurePlateIds`,
+    door.opensWith.pressurePlateIds,
+    pressurePlateIds,
+    errors,
+  );
+  validateReferences(
+    `${levelId}.doors.${door.id}.opensWith.leverIds`,
+    door.opensWith.leverIds,
+    leverIds,
+    errors,
+  );
+}
+
+function validateReferences(
+  path: string,
+  ids: string[] | undefined,
+  validIds: Set<string>,
+  errors: string[],
+) {
+  if (ids === undefined) return;
+  if (!Array.isArray(ids)) {
+    errors.push(`${path} must be an array.`);
+    return;
+  }
+
+  ids.forEach((id) => {
+    if (!validIds.has(id)) errors.push(`${path} references missing id "${id}".`);
+  });
 }
 
 function readArray<T>(path: string, value: T[], errors: string[]) {
