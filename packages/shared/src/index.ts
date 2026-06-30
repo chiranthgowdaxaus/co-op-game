@@ -18,14 +18,17 @@ export interface PlayerState {
 }
 
 export interface RoomState {
+  currentLevelId: string;
   players: Map<string, PlayerState>;
   collectedGems: Map<string, boolean>;
+  hazardStates: Map<string, boolean>;
   plateActive: boolean;
   leverActive: boolean;
   doorOpen: boolean;
   playersAtExit: number;
   exitBlocked: boolean;
   levelComplete: boolean;
+  allLevelsComplete: boolean;
 }
 
 export * from "./levels.js";

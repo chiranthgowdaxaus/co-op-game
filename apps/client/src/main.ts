@@ -10,10 +10,12 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder.pure
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Client, Room } from "@colyseus/sdk";
-import { TUTORIAL_LEVEL } from "@coop/shared";
+import { getLevelDefinition } from "@coop/shared";
 import type {
   CharacterSelection,
   LevelBox,
+  LevelDefinition,
+  LevelDoor,
   LevelExit,
   LevelGem,
   LevelHazard,
@@ -53,11 +55,17 @@ const chooseWaterButton =
   document.querySelector<HTMLButtonElement>("#choose-water")!;
 const chooseFireButton =
   document.querySelector<HTMLButtonElement>("#choose-fire")!;
+const levelActions = document.querySelector<HTMLElement>("#level-actions")!;
+const restartButton =
+  document.querySelector<HTMLButtonElement>("#restart-level")!;
+const nextLevelButton =
+  document.querySelector<HTMLButtonElement>("#next-level")!;
 
 const engine = new Engine(canvas, true, { stencil: false });
 const scene = new Scene(engine);
 scene.clearColor = new Color4(0.06, 0.09, 0.14, 1);
-const LEVEL = TUTORIAL_LEVEL;
+let level = getLevelDefinition("level-1");
+let builtLevelId = "";
 
 const LEVEL_FOCUS = new Vector3(-1.2, 0, 3.5);
 const CAMERA_OFFSET = new Vector3(0, 12.5, -13.5);
@@ -70,15 +78,8 @@ camera.inputs.clear();
 const light = new HemisphericLight("light", new Vector3(0, 1, 0), scene);
 light.intensity = 1;
 
-const ground = CreateGround(
-  "ground",
-  { width: LEVEL.floor.width, height: LEVEL.floor.depth },
-  scene,
-);
-ground.position.set(LEVEL.floor.x, 0, LEVEL.floor.z);
 const groundMaterial = new StandardMaterial("ground-material", scene);
 groundMaterial.diffuseColor = new Color3(0.2, 0.26, 0.34);
-ground.material = groundMaterial;
 
 const blueMaterial = new StandardMaterial("blue-player", scene);
 blueMaterial.diffuseColor = new Color3(0.2, 0.55, 1);
@@ -151,49 +152,89 @@ const fireGemMaterial = new StandardMaterial("fire-gem", scene);
 fireGemMaterial.diffuseColor = new Color3(1, 0.5, 0.08);
 fireGemMaterial.emissiveColor = new Color3(0.35, 0.14, 0.02);
 
-const pressurePlateMeshes = LEVEL.pressurePlates.map((plate) =>
-  createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
-);
+let levelMeshes: Mesh[] = [];
+let pressurePlateMeshes: Mesh[] = [];
+let doorMeshes: Array<{ definition: LevelDoor; mesh: Mesh }> = [];
+let leverMeshes: Array<{ definition: LevelLever; stick: Mesh }> = [];
+let gemMeshes = new Map<string, Mesh>();
 
-const doorMeshes = LEVEL.doors.map((doorDefinition) => ({
-  definition: doorDefinition,
-  mesh: createLevelBox(
-    `door-${doorDefinition.id}`,
-    doorDefinition,
-    doorClosedMaterial,
-    doorDefinition.closedY,
-  ),
-}));
+function trackLevelMesh(mesh: Mesh) {
+  levelMeshes.push(mesh);
+  return mesh;
+}
 
-LEVEL.walls.forEach((wall) =>
-  createLevelBox(`wall-${wall.id}`, wall, wallMaterial),
-);
+function clearLevel() {
+  levelMeshes.forEach((mesh) => mesh.dispose());
+  levelMeshes = [];
+  pressurePlateMeshes = [];
+  doorMeshes = [];
+  leverMeshes = [];
+  gemMeshes = new Map();
+  builtLevelId = "";
+}
 
-const leverMeshes = LEVEL.levers.map((lever) => createLeverMeshes(lever));
+function buildLevel(levelData: LevelDefinition) {
+  clearLevel();
+  level = levelData;
 
-LEVEL.exits.forEach((exit) => {
-  createLevelBox(`exit-${exit.id}`, exit, exitMaterial);
-  createExitBorder(exit);
-});
+  const ground = trackLevelMesh(
+    CreateGround(
+      `ground-${level.id}`,
+      { width: level.floor.size.x, height: level.floor.size.z },
+      scene,
+    ),
+  );
+  ground.position.set(
+    level.floor.position.x,
+    level.floor.position.y,
+    level.floor.position.z,
+  );
+  ground.material = groundMaterial;
 
-LEVEL.hazards.forEach((hazard) => createHazardMesh(hazard));
+  pressurePlateMeshes = level.pressurePlates.map((plate) =>
+    createLevelBox(`pressure-plate-${plate.id}`, plate, plateInactiveMaterial),
+  );
 
-const gemMeshes = new Map(
-  LEVEL.gems.map((gem) => [gem.id, createGemMesh(gem)]),
-);
+  doorMeshes = level.doors.map((doorDefinition) => ({
+    definition: doorDefinition,
+    mesh: createLevelBox(
+      `door-${doorDefinition.id}`,
+      doorDefinition,
+      doorClosedMaterial,
+      doorDefinition.closedY,
+    ),
+  }));
+
+  level.walls.forEach((wall) =>
+    createLevelBox(`wall-${wall.id}`, wall, wallMaterial),
+  );
+
+  leverMeshes = level.levers.map((lever) => createLeverMeshes(lever));
+
+  level.exits.forEach((exit) => {
+    createLevelBox(`exit-${exit.id}`, exit, exitMaterial);
+    createExitBorder(exit);
+  });
+
+  level.hazards.forEach((hazard) => createHazardMesh(hazard));
+  gemMeshes = new Map(level.gems.map((gem) => [gem.id, createGemMesh(gem)]));
+  builtLevelId = level.id;
+}
 
 function createLevelBox(
   name: string,
   box: LevelBox,
   material: StandardMaterial,
-  y = box.height / 2,
+  y = box.position.y,
 ) {
-  const mesh = CreateBox(
-    name,
-    { width: box.width, height: box.height, depth: box.depth },
-    scene,
+  const mesh = trackLevelMesh(
+    CreateBox(
+      name,
+      { width: box.size.x, height: box.size.y, depth: box.size.z },
+      scene,
+    ),
   );
-  mesh.position.set(box.x, y, box.z);
+  mesh.position.set(box.position.x, y, box.position.z);
   mesh.material = material;
   return mesh;
 }
@@ -204,28 +245,33 @@ function createGemMesh(gem: LevelGem) {
     { diameter: gem.radius * 2, segments: 12 },
     scene,
   );
-  mesh.position.set(gem.position.x, gem.radius + 0.12, gem.position.z);
+  trackLevelMesh(mesh);
+  mesh.position.set(gem.position.x, gem.position.y, gem.position.z);
   mesh.material = gem.type === "water" ? waterGemMaterial : fireGemMaterial;
   return mesh;
 }
 
 function createHazardMesh(hazard: LevelHazard) {
-  const pool = CreateBox(
-    `hazard-${hazard.id}`,
-    { width: hazard.size.width, height: 0.06, depth: hazard.size.depth },
-    scene,
+  const pool = trackLevelMesh(
+    CreateBox(
+      `hazard-${hazard.id}`,
+      { width: hazard.size.x, height: hazard.size.y, depth: hazard.size.z },
+      scene,
+    ),
   );
-  pool.position.set(hazard.position.x, 0.035, hazard.position.z);
+  pool.position.set(hazard.position.x, hazard.position.y, hazard.position.z);
   pool.material = hazardMaterial(hazard);
 
-  const border = CreateBox(
-    `hazard-border-${hazard.id}`,
-    {
-      width: hazard.size.width + 0.15,
-      height: 0.04,
-      depth: hazard.size.depth + 0.15,
-    },
-    scene,
+  const border = trackLevelMesh(
+    CreateBox(
+      `hazard-border-${hazard.id}`,
+      {
+        width: hazard.size.x + 0.15,
+        height: 0.04,
+        depth: hazard.size.z + 0.15,
+      },
+      scene,
+    ),
   );
   border.position.set(hazard.position.x, 0.02, hazard.position.z);
   border.material = hazardBorderMaterial;
@@ -239,58 +285,113 @@ function hazardMaterial(hazard: LevelHazard) {
 }
 
 function createLeverMeshes(definition: LevelLever) {
-  const base = CreateBox(
-    `lever-base-${definition.id}`,
-    {
-      width: definition.base.width,
-      height: definition.base.height,
-      depth: definition.base.depth,
-    },
-    scene,
+  const base = trackLevelMesh(
+    CreateBox(
+      `lever-base-${definition.id}`,
+      {
+        width: definition.base.size.x,
+        height: definition.base.size.y,
+        depth: definition.base.size.z,
+      },
+      scene,
+    ),
   );
-  base.position.set(definition.x, definition.base.height / 2, definition.z);
+  base.position.set(
+    definition.position.x,
+    definition.position.y + definition.base.size.y / 2,
+    definition.position.z,
+  );
   base.material = leverBaseMaterial;
 
-  const stick = CreateBox(
-    `lever-stick-${definition.id}`,
-    {
-      width: definition.stick.width,
-      height: definition.stick.height,
-      depth: definition.stick.depth,
-    },
-    scene,
+  const stick = trackLevelMesh(
+    CreateBox(
+      `lever-stick-${definition.id}`,
+      {
+        width: definition.stick.size.x,
+        height: definition.stick.size.y,
+        depth: definition.stick.size.z,
+      },
+      scene,
+    ),
   );
   stick.material = leverInactiveMaterial;
+  positionLeverStick(stick, definition, false);
 
   return { definition, stick };
 }
 
+function positionLeverStick(
+  stick: Mesh,
+  definition: LevelLever,
+  leverActive: boolean,
+) {
+  const leverAngle = leverActive ? 0.6 : -0.6;
+
+  stick.rotation.z = leverAngle;
+  stick.position.set(
+    definition.position.x -
+      Math.sin(leverAngle) * (definition.stick.size.y / 2),
+    definition.position.y +
+      definition.base.size.y +
+      Math.cos(leverAngle) * (definition.stick.size.y / 2),
+    definition.position.z,
+  );
+}
+
 function createExitBorder(exit: LevelExit) {
+  const y = exit.position.y + exit.borderHeight / 2;
+
   createLevelBox(
     `exit-back-${exit.id}`,
-    { ...exit, height: exit.borderHeight, depth: exit.borderHeight },
+    {
+      position: {
+        x: exit.position.x,
+        y,
+        z: exit.position.z + exit.size.z / 2,
+      },
+      size: { x: exit.size.x, y: exit.borderHeight, z: exit.borderHeight },
+    },
     exitBorderMaterial,
-    exit.borderHeight / 2,
-  ).position.z = exit.z + exit.depth / 2;
+  );
   createLevelBox(
     `exit-front-${exit.id}`,
-    { ...exit, height: exit.borderHeight, depth: exit.borderHeight },
+    {
+      position: {
+        x: exit.position.x,
+        y,
+        z: exit.position.z - exit.size.z / 2,
+      },
+      size: { x: exit.size.x, y: exit.borderHeight, z: exit.borderHeight },
+    },
     exitBorderMaterial,
-    exit.borderHeight / 2,
-  ).position.z = exit.z - exit.depth / 2;
+  );
   createLevelBox(
     `exit-left-${exit.id}`,
-    { ...exit, width: exit.borderHeight, height: exit.borderHeight },
+    {
+      position: {
+        x: exit.position.x - exit.size.x / 2,
+        y,
+        z: exit.position.z,
+      },
+      size: { x: exit.borderHeight, y: exit.borderHeight, z: exit.size.z },
+    },
     exitBorderMaterial,
-    exit.borderHeight / 2,
-  ).position.x = exit.x - exit.width / 2;
+  );
   createLevelBox(
     `exit-right-${exit.id}`,
-    { ...exit, width: exit.borderHeight, height: exit.borderHeight },
+    {
+      position: {
+        x: exit.position.x + exit.size.x / 2,
+        y,
+        z: exit.position.z,
+      },
+      size: { x: exit.borderHeight, y: exit.borderHeight, z: exit.size.z },
+    },
     exitBorderMaterial,
-    exit.borderHeight / 2,
-  ).position.x = exit.x + exit.width / 2;
+  );
 }
+
+buildLevel(level);
 
 interface PlayerMeshes {
   body: Mesh;
@@ -377,9 +478,15 @@ function syncPlayers(players: Map<string, PlayerState>) {
 }
 
 function syncWorld(state: RoomState) {
+  const nextLevel = getLevelDefinition(state.currentLevelId);
+  if (builtLevelId !== nextLevel.id) {
+    buildLevel(nextLevel);
+  }
+
   syncCharacterSelection(state);
   syncPlayers(state.players);
   syncGems(state);
+  syncLevelActions(state);
   pressurePlateMeshes.forEach((plate) => {
     plate.material = state.plateActive
       ? plateActiveMaterial
@@ -389,22 +496,18 @@ function syncWorld(state: RoomState) {
     mesh.position.y = state.doorOpen ? definition.openY : definition.closedY;
     mesh.material = state.doorOpen ? doorOpenMaterial : doorClosedMaterial;
   });
-  const leverAngle = state.leverActive ? 0.6 : -0.6;
   leverMeshes.forEach(({ definition, stick }) => {
-    stick.rotation.z = leverAngle;
     stick.material = state.leverActive
       ? plateActiveMaterial
       : leverInactiveMaterial;
-    stick.position.set(
-      definition.x - Math.sin(leverAngle) * (definition.stick.height / 2),
-      definition.base.height + Math.cos(leverAngle) * (definition.stick.height / 2),
-      definition.z,
-    );
+    positionLeverStick(stick, definition, state.leverActive);
   });
   leverStatusText.hidden = !canPlay;
   leverStatusText.textContent = state.leverActive ? "Lever on" : "Lever off";
   gameStatusText.hidden = !canPlay;
-  gameStatusText.textContent = state.levelComplete
+  gameStatusText.textContent = state.allLevelsComplete
+    ? "All levels complete"
+    : state.levelComplete
     ? "Level complete"
     : state.exitBlocked
       ? "Collect all gems before exiting"
@@ -419,8 +522,13 @@ function syncWorld(state: RoomState) {
   if (canPlay) sendInput();
 }
 
+function syncLevelActions(state: RoomState) {
+  levelActions.hidden = !canPlay || !state.levelComplete;
+  nextLevelButton.disabled = state.allLevelsComplete;
+}
+
 function syncGems(state: RoomState) {
-  const requiredGems = LEVEL.gems.filter((gem) => gem.required);
+  const requiredGems = level.gems.filter((gem) => gem.required);
   const collectedRequired = requiredGems.filter((gem) =>
     state.collectedGems.get(gem.id),
   ).length;
@@ -428,7 +536,7 @@ function syncGems(state: RoomState) {
   gemProgressText.hidden = !canPlay;
   gemProgressText.textContent = `Gems: ${collectedRequired}/${requiredGems.length}`;
 
-  LEVEL.gems.forEach((gem) => {
+  level.gems.forEach((gem) => {
     gemMeshes.get(gem.id)?.setEnabled(!state.collectedGems.get(gem.id));
   });
 }
@@ -440,9 +548,12 @@ function syncInteractionPrompt(state: RoomState) {
   const localPlayer = room ? state.players.get(room.sessionId) : undefined;
   const nearLever =
     localPlayer &&
-    LEVEL.levers.some(
+    level.levers.some(
       (lever) =>
-        Math.hypot(localPlayer.x - lever.x, localPlayer.z - lever.z) <=
+        Math.hypot(
+          localPlayer.x - lever.position.x,
+          localPlayer.z - lever.position.z,
+        ) <=
         lever.interactDistance,
     );
 
@@ -559,6 +670,7 @@ async function connect(action: () => Promise<Room<RoomState>>) {
       room = null;
       canPlay = false;
       characterPanel.hidden = true;
+      levelActions.hidden = true;
       gemProgressText.hidden = true;
       gemStatusText.hidden = true;
       hazardStatusText.hidden = true;
@@ -621,6 +733,14 @@ chooseWaterButton.addEventListener("click", () => {
 
 chooseFireButton.addEventListener("click", () => {
   selectCharacter("fire");
+});
+
+restartButton.addEventListener("click", () => {
+  room?.send("restart");
+});
+
+nextLevelButton.addEventListener("click", () => {
+  room?.send("nextLevel");
 });
 
 roomCodeInput.addEventListener("input", () => {
